@@ -11,7 +11,7 @@ my $usage = "\ndnaorg_compare_genomes.pl\n";
 $usage .= "\t<directory created by dnaorg_fetch_dna_wrapper>\n";
 $usage .= "\t<list file with all accessions>\n";
 $usage .= "\n"; 
-$usage .= " This script compares genomes from the same species based.\n";
+$usage .= " This script compares genomes from the same species based\n";
 $usage .= " mostly on files containing parsed information from a\n";
 $usage .= " 'feature table' file which must already exist. That file is\n";
 $usage .= " created by running 'dnaorg_fetch_dna_wrapper.pl -ftable' and\n";
@@ -34,7 +34,7 @@ my $fraclen = undef;
 if(scalar(@ARGV) != 2) { die $usage; }
 my ($dir, $listfile) = (@ARGV);
 
-$dir =~ s/\/$//; # remove trailing '/' if there is one
+$dir =~ s/\/*$//; # remove trailing '/' if there is one
 
 # store options used, so we can output them 
 my $opts_used_short = "";
@@ -123,6 +123,11 @@ parseTable($cds_tbl_file,  \%cds_tbl_HHA);
 # now create the output
 # the verbose output
 my $wstrand_str = 0;
+my %class_strand_str_H = (); # key: strand string, class number for this strand string 
+my %ct_strand_str_H = ();    # key: strand string, number of accessions in the class defined by this strand string 
+my %fa_strand_str_H = ();    # key: strand string, name of output fasta file for the class defined by this strand string 
+my $class = undef;
+my $nclasses = 0;
 for(my $a = 0; $a < scalar(@accn_A); $a++) { 
   my $accn = $accn_A[$a];
 
@@ -145,11 +150,25 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   }
   if($a == 0) { $wstrand_str = length($strand_str) + 2; }
   
-  printf("%-*s  %5d  %5d  %5d  %5d  %5d  %-*s  %d  ", $waccn, $accn, $ncds, $npos, $nneg, $nbth, $nunc, $wstrand_str, $strand_str, $totlen_H{$accn});
+  if(! exists $class_strand_str_H{$strand_str}) { 
+    $nclasses++;
+    $class_strand_str_H{$strand_str} = $nclasses;
+    $ct_strand_str_H{$strand_str} = 0;
+    $fa_strand_str_H{$strand_str} = $dir . "/" . $dir . "." . $nclasses . ".fa";
+  }
+  $class = $class_strand_str_H{$strand_str};
+  $ct_strand_str_H{$strand_str}++;
+  
+  printf("%-*s  %5d  %5d  %5d  %5d  %5d  %-*s  %3d  %d  ", $waccn, $accn, $ncds, $npos, $nneg, $nbth, $nunc, $wstrand_str, $strand_str, $class, $totlen_H{$accn});
   for(my $i = 0; $i < scalar(@cds_len_A); $i++) { 
     printf("  %5d", $cds_len_A[$i]);
   }
   printf("\n");
+
+  # fetch the sequence
+  my $cmd = sprintf("esearch -db nuccore -query \"$accn [ACCN]\" | efetch -format fasta %s %s", ($ct_strand_str_H{$strand_str} > 1) ? ">>" : ">", $fa_strand_str_H{$strand_str});
+  printf("$cmd\n");
+  
 }
 
 printf("\n\n");
