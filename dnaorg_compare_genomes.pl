@@ -7,152 +7,228 @@ use Getopt::Long;
 use Time::HiRes qw(gettimeofday);
 
 # The definition of $usage explains the script and usage:
-my $usage = "\ndnaorg_compare_genomes.pl <file with list of directories> <output directory>\n";
+my $usage = "\ndnaorg_compare_genomes.pl\n";
+$usage .= "\t<directory created by dnaorg_fetch_dna_wrapper>\n";
+$usage .= "\t<list file with all accessions>\n";
 $usage .= "\n"; 
 $usage .= " This script compares genomes from the same species based.\n";
-$usage .= " mostly on files containing parsed information from their\n";
-$usage .= " 'feature tables' which must already exist. Those files are\n";
+$usage .= " mostly on files containing parsed information from a\n";
+$usage .= " 'feature table' file which must already exist. That file is\n";
 $usage .= " created by running 'dnaorg_fetch_dna_wrapper.pl -ftable' and\n";
 $usage .= " subsequently 'parse-ftable.pl'.\n";
 $usage .= "\n";
 $usage .= " BASIC OPTIONS:\n";
-$usage .= "  -f      : force; if dir <outdir> exists, overwrite it\n";
-#$usage .= "  -v      : be verbose; output commands to stdout as they're run\n";
-#$usage .= "\n";
+$usage .= "  -t <f>  : fractional length difference threshold for mismatch [default: 0.1]\n";
+$usage .= "\n";
 
 my ($seconds, $microseconds) = gettimeofday();
 my $start_secs = ($seconds + ($microseconds / 1000000.));
 my $executable = $0;
 my $be_verbose = 1;
+my $df_fraclen = 0.1;
+my $fraclen = undef;
 
-my $out_dir        = undef; 
-my $dirlist_file   = undef; 
+&GetOptions( "t"        => \$fraclen);
 
-# initialize variables that can be changed with cmdline options
-my $do_force        = 0;     # set to '1' with -f, overwrite output dir if it exists
-
-&GetOptions( "f"        => \$do_force);
 
 if(scalar(@ARGV) != 2) { die $usage; }
-($dirlist_file, $out_dir) = (@ARGV);
+my ($dir, $listfile) = (@ARGV);
+
+$dir =~ s/\/$//; # remove trailing '/' if there is one
 
 # store options used, so we can output them 
 my $opts_used_short = "";
 my $opts_used_long  = "";
-if($do_force) { 
-  $opts_used_short .= "-f ";
-  $opts_used_long  .= "# option:  forcing overwrite of $out_dir dir/file [-f]\n"; 
+if(defined $fraclen) { 
+  $opts_used_short .= "-t $fraclen";
+  $opts_used_long  .= "# option:  setting fractional length threshold to $fraclen [-t]\n";
 }
 
-# check for incompatible option combinations:
-# NONE YET
+# check for incompatible option values/combinations:
+if(defined $fraclen && ($fraclen < 0 || $fraclen > 1)) { 
+  die "ERROR with -t <f>, <f> must be a number between 0 and 1."; 
+}
+
+# set fractional length threshold if user didn't on the command line
+if(! defined $fraclen) { 
+  $fraclen = $df_fraclen; 
+}
 
 ###############
 # Preliminaries
 ###############
-# check if the $dirlist_file exists
-if(! -s $dirlist_file) { die "ERROR $dirlist_file does not exist"; }
+# check if the $dir exists, and that it contains a .gene.tbl file, and a .length file
+if(! -d $dir)      { die "ERROR directory $dir does not exist"; }
+if(! -s $listfile) { die "ERROR list file $listfile does not exist, or is empty"; }
+my $dir_tail = $dir;
+$dir_tail =~ s/^.+\///; # remove all but last dir
+my $gene_tbl_file = $dir . "/" . $dir_tail . ".gene.tbl";
+my $cds_tbl_file  = $dir . "/" . $dir_tail . ".CDS.tbl";
+my $length_file   = $dir . "/" . $dir_tail . ".length";
+#if(! -s $gene_tbl_file) { die "ERROR $gene_tbl_file does not exist."; }
+if(! -s $cds_tbl_file)  { die "ERROR $cds_tbl_file does not exist."; }
+if(! -s $length_file)   { die "ERROR $length_file does not exist."; }
 
-# check if our output dir $out_dir exists
-if($out_dir !~ m/\/$/) { $out_dir .= "/"; } # add '/'
-if(-d $out_dir) { 
-  if($do_force) { RunCommand("rm -rf $out_dir", $be_verbose, undef); }
-  else          { die "ERROR directory named $out_dir already exists. Remove it, or use -f to overwrite it."; }
+# output banner
+my $script_name = "dnaorg_compare_genomes.pl";
+my $script_desc = "Compare GenBank annotation of genomes";
+print ("# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+print ("# $script_name: $script_desc\n");
+print ("# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n");
+print ("# command: $executable $opts_used_short $dir $listfile\n");
+printf("# date:    %s\n", scalar localtime());
+if($opts_used_long ne "") { 
+  print $opts_used_long;
 }
 
-my $tbl_type = "gene";
-
-########################
-# read the dirlist file
-########################
-open(IN, $dirlist_file) || die "ERROR unable to open $dirlist_file";
-my @dir_A = (); # array of the directories
-my @len_A = (); # array of lengths
-my @tbl_A = (); # array of table files
-my $ctr = 0;
-while(my $dir = <IN>) { 
-  chomp $dir;
-  if(! -d $dir) { die "ERROR no directory named $dir exists"; }
-  my $dir_tail = $dir;
-  $dir_tail =~ s/^.+\///; # remove all but last dir
-  my $len = $dir . "/" . $dir_tail . ".length";
-  my $tbl = $dir . "/" . $dir_tail . "." . $tbl_type . ".tbl";
-  if(! -s $len)                { die "ERROR no length file in ($len does not exist or is empty)"; }
-  if($ctr == 0 && (! -s $tbl)) { die "ERROR no table file in first directory ($tbl does not exist or is empty)"; }
-  # if $ctr > 0, $tbl may not exist, that's okay
-  push(@dir_A, $dir);
-  push(@len_A, $len);
-  push(@tbl_A, $tbl);
-  $ctr++;
+#####################
+# parse the list file
+#####################
+my @accn_A = (); # array of accessions
+open(IN, $listfile) || die "ERROR unable to open $listfile for reading"; 
+my $waccn = 0; # max length of all accessions
+while(my $accn = <IN>) { 
+  chomp $accn;
+  $accn =~ s/\/.[0-9]+//; # remove version
+  push(@accn_A, $accn);
+  if(length($accn) > $waccn) { $waccn = length($accn); }
 }
-close(IN);
+close(IN); 
+
+my $head_accn = $accn_A[0];
+
 
 ##################################
 # parse the table and length files
 ##################################
-my @values_AHA = ();  # array of hashes of arrays, 
-                      # 1D: per-genome listed in $dirlist_file
-                      # 2D: key: column name in tbl file
-                      # 3D: per-row values for each column
-my @totlen_A = (); # lengths of each sequence (in order or @dir_A)
+my %gene_tbl_HHA = ();  # Data from .gene.tbl file
+                        # 1D: key: accession
+                        # 2D: key: column name in gene ftable file
+                        # 3D: per-row values for each column
+my %cds_tbl_HHA = ();   # Data from .cds.tbl file
+                        # hash of hashes of arrays, 
+                        # 1D: key: accession
+                        # 2D: key: column name in gene ftable file
+                        # 3D: per-row values for each column
+my %totlen_H = (); # key: accession, value length read from length file
 
-for(my $d = 0; $d < scalar(@dir_A); $d++) { 
-  my $len = $len_A[$d];
-  parseLength($len, \@totlen_A);
+parseLength($length_file, \%totlen_H);
 
-  my $tbl = $tbl_A[$d];
-  %{$values_AHA[$d]} = ();
-  parseTable($tbl, \%{$values_AHA[$d]});
-}
+#parseTable($gene_tbl_file, \%gene_tbl_HHA);
+parseTable($cds_tbl_file,  \%cds_tbl_HHA);
 
 ########
 # output 
 ########
 # now create the output
 # the verbose output
-for(my $d = 0; $d < scalar(@dir_A); $d++) { 
-  my $dir = $dir_A[$d];
-  if(! exists $values_AHA[$d]{"accession"}) { die("ERROR didn't read accession information for for genome number %d\n", $d+1); }
-  my $acc = $values_AHA[$d]{"accession"}[0];
-  my ($ngenes, $npos, $nneg, $nunc, $nbth, $strand_str) = getGeneStats(\@values_AHA, $d);
-  my @genelen_A = ();
-  my ($tot_len) = getLengthStats(\@values_AHA, $d, \@genelen_A);
-  printf("%-30s  %5d  %5d  %5d  %5d  %5d  %s  %d  ", $acc, $ngenes, $npos, $nneg, $nbth, $nunc, $strand_str, $totlen_A[$d]);
-  for(my $i = 0; $i < scalar(@genelen_A); $i++) { 
-    printf("  %5d", $genelen_A[$i]);
+my $wstrand_str = 0;
+for(my $a = 0; $a < scalar(@accn_A); $a++) { 
+  my $accn = $accn_A[$a];
+
+  # sanity checks
+  if($a == 0 && (! exists $cds_tbl_HHA{$accn})) { die "ERROR didn't read any CDS table information for first accession in $listfile: $accn\n"; } 
+  if(! exists $totlen_H{$accn}) { die "ERROR accession $accn does not exist in the length file $length_file"; }
+
+  # set defaults that will stay if we don't have any CDS information
+  my $ncds = 0; 
+  my $npos = 0;
+  my $nneg = 0;
+  my $nunc = 0;
+  my $nbth = 0; 
+  my $strand_str = "";
+  my @cds_len_A = ();
+
+  if(exists ($cds_tbl_HHA{$accn})) { 
+    ($ncds, $npos, $nneg, $nunc, $nbth, $strand_str) = getStrandStats(\%cds_tbl_HHA, $accn);
+    getLengthStats(\%cds_tbl_HHA, $accn, \@cds_len_A);
+  }
+  if($a == 0) { $wstrand_str = length($strand_str) + 2; }
+  
+  printf("%-*s  %5d  %5d  %5d  %5d  %5d  %-*s  %d  ", $waccn, $accn, $ncds, $npos, $nneg, $nbth, $nunc, $wstrand_str, $strand_str, $totlen_H{$accn});
+  for(my $i = 0; $i < scalar(@cds_len_A); $i++) { 
+    printf("  %5d", $cds_len_A[$i]);
   }
   printf("\n");
 }
 
 printf("\n\n");
 # the concise output
-my ($ngenes0, $npos0, $nneg0, $nunc0, $nbth0, $strand_str0) = getGeneStats(\@values_AHA, 0);
-for(my $d = 0; $d < scalar(@dir_A); $d++) { 
-  my $dir = $dir_A[$d];
-  my ($ngenes, $npos, $nneg, $nunc, $nbth, $strand_str) = getGeneStats(\@values_AHA, $d);
-  my $acc = $values_AHA[$d]{"accession"}[0];
-  printf("%-30s  %s%s%s%s%s%s\n", $acc,
-         $ngenes     == $ngenes0 ? "*" : "!",
-         $npos       == $npos0 ? "*" : "!",
-         $nneg       == $nneg0 ? "*" : "!",
-         $nbth       == $nbth0 ? "*" : "!",
-         $nunc       == $nunc0 ? "*" : "!",
-         $strand_str eq $strand_str0 ? "*" : "!");
+my ($ncds0, $npos0, $nneg0, $nunc0, $nbth0, $strand_str0) = getStrandStats(\%cds_tbl_HHA, $head_accn);
+my @cds_len0_A = (); 
+getLengthStats(\%cds_tbl_HHA, $head_accn, \@cds_len0_A);
+
+my $mintotlen = $totlen_H{$head_accn} - ($fraclen * $totlen_H{$head_accn});
+my $maxtotlen = $totlen_H{$head_accn} + ($fraclen * $totlen_H{$head_accn});
+
+my @minlen_A = (); # [0..$i..scalar(@cds_len0_A)-1] minimum length for a length match for gene $i
+my @maxlen_A = (); # [0..$i..scalar(@cds_len0_A)-1] maximum length for a length match for gene $i
+for(my $i = 0; $i < scalar(@cds_len0_A); $i++) { 
+  $minlen_A[$i] = $cds_len0_A[$i] - ($fraclen * $cds_len0_A[$i]);
+  $maxlen_A[$i] = $cds_len0_A[$i] + ($fraclen * $cds_len0_A[$i]);
+}
+
+for(my $a = 0; $a < scalar(@accn_A); $a++) { 
+  my $accn = $accn_A[$a];
+  
+  # set defaults that will stay if we don't have any CDS information
+  my $ncds = 0; 
+  my $npos = 0;
+  my $nneg = 0;
+  my $nunc = 0;
+  my $nbth = 0; 
+  my $strand_str = "";
+  my @cds_len_A = ();
+  if(exists ($cds_tbl_HHA{$accn})) { 
+    ($ncds, $npos, $nneg, $nunc, $nbth, $strand_str) = getStrandStats(\%cds_tbl_HHA, $accn);
+    getLengthStats(\%cds_tbl_HHA, $accn, \@cds_len_A);
+  }    
+
+  my $output_line = sprintf("%-*s  %s%s%s%s%s%s ", $waccn, $accn,
+                            $ncds       == $ncds0   ? "*" : "!",
+                            $npos       == $npos0   ? "*" : "!",
+                            $nneg       == $nneg0   ? "*" : "!",
+                            $nbth       == $nbth0   ? "*" : "!",
+                            $nunc       == $nunc0   ? "*" : "!",
+                            $strand_str eq $strand_str0 ? "*" : "!");
+
+  if($totlen_H{$accn} >= $mintotlen && $totlen_H{$accn} <= $maxtotlen) { 
+    $output_line .= "*";
+  }
+  else { 
+    $output_line .= "!";
+  }
+  $output_line .= " ";
+
+  for(my $i = 0; $i < scalar(@cds_len0_A); $i++) { 
+    if($i < scalar(@cds_len_A)) { 
+      if($cds_len_A[$i] >= $minlen_A[$i] && $cds_len_A[$i] <= $maxlen_A[$i]) { 
+        $output_line .= "*";
+      }
+      else { 
+        $output_line .= "!"; 
+      }
+    }
+    else { $output_line .= " "; }
+  }
+  my $pass_or_fail = ($output_line =~ m/\!/) ? "FAIL" : "PASS";
+
+  print $output_line . " " . $pass_or_fail . "\n";
 }
 
 
 #############
 # SUBROUTINES
 #############
-# Subroutine: RunCommand()
+# Subroutine: runCommand()
 # Args:       $cmd:            command to run, with a "system" command;
 #             $be_verbose:     '1' to output command to stdout before we run it, '0' not to
 #
 # Returns:    amount of time the command took, in seconds
 # Dies:       if $cmd fails
 
-sub RunCommand {
-  my $sub_name = "RunCommand()";
+sub runCommand {
+  my $sub_name = "runCommand()";
   my $nargs_exp = 2;
 
   my ($cmd, $be_verbose) = @_;
@@ -174,11 +250,11 @@ sub RunCommand {
 
 # Subroutine: parseLength()
 # Synopsis:   Parses a length file and stores the lengths read
-#             into $len_AR.
+#             into %{$len_HR}.
 # Args:       $lenfile: full path to a length file
-#             $len_AR:  ref array of lengths
+#             $len_HR:  ref to hash of lengths, key is accession
 #
-# Returns:    void; fills @{$len_AR}
+# Returns:    void; fills %{$len_HR}
 #
 # Dies:       if problem parsing $lenfile
 
@@ -187,7 +263,7 @@ sub parseLength {
   my $nargs_exp = 2;
   if(scalar(@_) != $nargs_exp) { die "ERROR $sub_name entered with wrong number of input args"; }
 
-  my ($lenfile, $len_AR) = @_;
+  my ($lenfile, $len_HR) = @_;
 
 #HM448898.1	2751
 
@@ -197,7 +273,9 @@ sub parseLength {
     chomp $line;
     my ($accn, $length) = split(/\s+/, $line);
     if($length !~ m/^\d+$/) { die "ERROR couldn't parse length file line: $line\n"; } 
-    push(@{$len_AR}, $length);
+
+    stripVersion(\$accn);
+    $len_HR->{$accn} = $length;
   }
   close(LEN);
 
@@ -207,10 +285,10 @@ sub parseLength {
 # Subroutine: parseTable()
 # Synopsis:   Parses a table file and stores the relevant info in it 
 #             into $values_HAR.
-# Args:       $tblfile:     full path to a table file
-#             $values_HAR:  ref to hash of arrays
+# Args:       $tblfile:      full path to a table file
+#             $values_HHAR:  ref to hash of hash of arrays
 #
-# Returns:    void; fills @{$values_HAR}
+# Returns:    void; fills @{$values_HHAR}
 #
 # Dies:       if problem parsing $tblfile
 
@@ -219,7 +297,7 @@ sub parseTable {
   my $nargs_exp = 2;
   if(scalar(@_) != $nargs_exp) { die "ERROR $sub_name entered with wrong number of input args"; }
 
-  my ($tblfile, $values_HAR) = @_;
+  my ($tblfile, $values_HHAR) = @_;
 
 ##full-accession	accession	coords	strand	min-coord	gene
 #gb|HM448898.1|	HM448898.1	129..476	+	129	AV2
@@ -235,23 +313,33 @@ sub parseTable {
   if(! defined $line) { die "ERROR did not read any lines from file $tblfile"; }
   chomp $line;
   if($line =~ s/^\#//) { 
-    @colnames_A = split(/\s+/, $line);
+    @colnames_A = split(/\t/, $line);
     $ncols = scalar(@colnames_A);
   }
   else { 
     die "ERROR first line of $tblfile did not start with \"#\"";
   }
+  if($colnames_A[0] ne "full-accession") { die "ERROR first column name is not full-accession"; }
+  if($colnames_A[1] ne "accession")      { die "ERROR second column name is not accession"; }
+  if($colnames_A[2] ne "coords")         { die "ERROR third column name is not coords"; }
 
   # read remaining lines
   while($line = <TBL>) { 
     chomp $line;
     $line_ctr++;
     if($line =~ m/^\#/) { die "ERROR, line $line_ctr of $tblfile begins with \"#\""; }
-    my @el_A = split(/\s+/, $line);
+    my @el_A = split(/\t/, $line);
     if(scalar(@el_A) != $ncols) { 
       die "ERROR, read wrong number of columns in line $line_ctr of file $tblfile";
     }
     my $prv_min_coord = 0;
+    # get accession
+    my $accn = $el_A[1]; 
+    stripVersion(\$accn);
+    if(! exists $values_HHAR->{$accn}) { 
+      %{$values_HHAR->{$accn}} = (); 
+    }
+
     for(my $i = 0; $i < $ncols; $i++) { 
       my $colname = $colnames_A[$i];
       my $value   = $el_A[$i];
@@ -262,100 +350,96 @@ sub parseTable {
         $prv_min_coord = $value; 
         # printf("prv_min_coord: $prv_min_coord\n");
       }
-      if(! exists $values_HAR->{$colname}) { 
-        @{$values_HAR->{$colname}} = ();
+
+      if(! exists $values_HHAR->{$accn}{$colname}) { 
+        @{$values_HHAR->{$accn}{$colname}} = ();
       }
-      push(@{$values_HAR->{$colname}}, $el_A[$i]);
+      push(@{$values_HHAR->{$accn}{$colname}}, $el_A[$i]);
+      #printf("pushed $accn $colname $el_A[$i]\n");
     }
   }
   close(TBL);
   return;
 }
 
-# Subroutine: getGeneStats()
-# Synopsis:   Retreive gene stats for a genome.
-# Args:       $values_AHAR:  ref to array of hash of arrays
-#             $idx:          first dim index in $values_AHAR to print
+# Subroutine: getStrandStats()
+# Synopsis:   Retreive strand stats.
+# Args:       $tbl_HHAR:  ref to hash of hash of arrays
+#             $accn:      1D key to print for
 #
 # Returns:    6 values:
-#             $ngenes:     number of genes
+#             $nfeatures:  number of features
 #             $npos:       number of genes with all segments on positive strand
 #             $nneg:       number of genes with all segmenst on negative strand
 #             $nunc:       number of genes with all segments on unknown strand 
 #             $nbth:       number of genes with that don't fit above 3 categories
 #             $strand_str: strand string, summarizing strand of all genes, in order
 #
-sub getGeneStats {
-  my $sub_name = "getGeneStats()";
+sub getStrandStats {
+  my $sub_name = "getStrandStats()";
   my $nargs_exp = 2;
   if(scalar(@_) != $nargs_exp) { die "ERROR $sub_name entered with wrong number of input args"; }
  
-  my ($values_AHAR, $idx) = @_;
+  my ($tbl_HHAR, $accn) = @_;
 
-  my $acc;      # accession of this genome
-  my $ngenes;   # number of genes in this genome
-  my $npos = 0; # number of genes on positive strand 
-  my $nneg = 0; # number of genes on negative strand 
-  my $nbth = 0; # number of genes with >= 1 segment on both strands (usually 0)
-  my $nunc = 0; # number of genes with >= 1 segments that are uncertain (usually 0)
+  my $nfeatures; # number of genes in this genome
+  my $npos = 0;  # number of genes on positive strand 
+  my $nneg = 0;  # number of genes on negative strand 
+  my $nbth = 0;  # number of genes with >= 1 segment on both strands (usually 0)
+  my $nunc = 0;  # number of genes with >= 1 segments that are uncertain (usually 0)
   my $strand_str = "";
 
-  if(! exists $values_AHAR->[$idx]{"strand"})    { die("ERROR didn't read strand information for for genome number %d\n", $idx+1); }
+  if(! exists $tbl_HHAR->{$accn}{"strand"}) { die("ERROR didn't read strand information for accn: $accn\n"); }
 
-  $acc    = $values_AHAR->[$idx]{"accession"}[0];
-  $ngenes = scalar(@{$values_AHAR->[$idx]{"accession"}});
-  if ($ngenes > 0) { 
-    for(my $i = 0; $i < $ngenes; $i++) { 
-      if($values_AHAR->[$idx]{"accession"}[0] ne $acc) { die("ERROR accession mismatch for genome number %d\n", $idx+1); }
-      if   ($values_AHAR->[$idx]{"strand"}[$i] eq "+") { $npos++; }
-      elsif($values_AHAR->[$idx]{"strand"}[$i] eq "-") { $nneg++; }
-      elsif($values_AHAR->[$idx]{"strand"}[$i] eq "!") { $nbth++; }
-      elsif($values_AHAR->[$idx]{"strand"}[$i] eq "?") { $nunc++; }
-      else { die("ERROR unable to parse strand for gene %d for genome number %s\n", $i+1, $idx+1); }
-      $strand_str .= $values_AHAR->[$idx]{"strand"}[$i];
+  $nfeatures = scalar(@{$tbl_HHAR->{$accn}{"accession"}});
+  if ($nfeatures > 0) { 
+    for(my $i = 0; $i < $nfeatures; $i++) { 
+
+      # sanity check
+      my $accn2 = $tbl_HHAR->{$accn}{"accession"}[$i];
+      stripVersion(\$accn2);
+      if($accn ne $accn2) { die "ERROR accession mismatch in gene ftable file ($accn ne $accn2)"; }
+
+      if   ($tbl_HHAR->{$accn}{"strand"}[$i] eq "+") { $npos++; }
+      elsif($tbl_HHAR->{$accn}{"strand"}[$i] eq "-") { $nneg++; }
+      elsif($tbl_HHAR->{$accn}{"strand"}[$i] eq "!") { $nbth++; }
+      elsif($tbl_HHAR->{$accn}{"strand"}[$i] eq "?") { $nunc++; }
+      else { die("ERROR unable to parse strand for feature %d for $accn\n", $i+1); }
+      $strand_str .= $tbl_HHAR->{$accn}{"strand"}[$i];
     }
   }
 
-  return ($ngenes, $npos, $nneg, $nunc, $nbth, $strand_str);
+  return ($nfeatures, $npos, $nneg, $nunc, $nbth, $strand_str);
 }
 
 
 # Subroutine: getLengthStats()
-# Synopsis:   Retreive length stats for a genome, including 
+# Synopsis:   Retreive length stats for an accession
 #             the length of all annotated genes.
-# Args:       $values_AHAR:  ref to array of hash of arrays
-#             $idx:          first dim index in $values_AHAR to print
-#             $len_AR:       ref to array of lengths to add to in this subroutine
-#
-# Returns:    $tot_len:    total length of the genome
-#             And @{$len_AR} is filled.
+# Args:       $tbl_HHAR:  ref to hash of hash of arrays
+#             $accn:      accession we're interested in
+#             $len_AR:    ref to array to fill with lengths of features in %{$tbl_HAR}
+# Returns:    void; fills @{$len_AR}
 #
 sub getLengthStats { 
   my $sub_name = "getLengthStats()";
   my $nargs_exp = 3;
   if(scalar(@_) != $nargs_exp) { die "ERROR $sub_name entered with wrong number of input args"; }
  
-  my ($values_AHAR, $idx, $len_AR) = @_;
+  my ($tbl_HHAR, $accn, $len_AR) = @_;
 
-  if(! exists $values_AHAR->[$idx]{"strand"})    { die("ERROR didn't read strand information for for genome number %d\n", $idx+1); }
+  if(! exists $tbl_HHAR->{$accn}) { die "ERROR in $sub_name, no data for accession: $accn"; }
+  if(! exists $tbl_HHAR->{$accn}{"coords"}) { die "ERROR in $sub_name, no coords data for accession: $accn"; }
 
-  my $acc    = $values_AHAR->[$idx]{"accession"}[0];
-  my $ngenes = scalar(@{$values_AHAR->[$idx]{"accession"}});
-  my $tot_len = 0;
+  my $ngenes = scalar(@{$tbl_HHAR->{$accn}{"coords"}});
 
   if ($ngenes > 0) { 
     for(my $i = 0; $i < $ngenes; $i++) { 
-      if($values_AHAR->[$idx]{"accession"}[0] ne $acc) { die("ERROR accession mismatch for genome number %d\n", $idx+1); }
-
-      my $length = 0;
-      if(exists $values_AHAR->[$idx]{"coords"}[$i]) { 
-        $length = lengthFromCoords($values_AHAR->[$idx]{"coords"}[$i]);
-      }
-      push(@{$len_AR}, $length);
+      push(@{$len_AR}, lengthFromCoords($tbl_HHAR->{$accn}{"coords"}[$i]));
     }
   }
 
-  return ($tot_len);
+  return;
 }
 
 
@@ -408,4 +492,18 @@ sub lengthFromCoords {
   return $length;
 }
 
+# Subroutine: stripVersion()
+# Purpose:    Given a ref to an accession.version string, remove the version.
+# Args:       $accver_R: ref to accession version string
+# Returns:    Nothing, $$accver_R has version removed
+sub stripVersion {
+  my $sub_name  = "stripVersion()";
+  my $nargs_exp = 1;
+  if(scalar(@_) != $nargs_exp) { die "ERROR $sub_name entered with wrong number of input args"; }
+  
+  my ($accver_R) = (@_);
 
+  $$accver_R =~ s/\.[0-9]*$//; # strip version
+
+  return;
+}
