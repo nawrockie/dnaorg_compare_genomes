@@ -6,6 +6,10 @@ use warnings;
 use Getopt::Long;
 use Time::HiRes qw(gettimeofday);
 
+# hard-coded-paths:
+#my $esl_fetch_cds = "/panfs/pan1/dnaorg/programs/esl-fetch-cds.pl";
+my $esl_fetch_cds = "/home/nawrocke/notebook/15_0518_dnaorg_virus_compare_script/wd-esl-fetch-cds/esl-fetch-cds.pl";
+
 # The definition of $usage explains the script and usage:
 my $usage = "\ndnaorg_compare_genomes.pl\n";
 $usage .= "\t<directory created by dnaorg_fetch_dna_wrapper>\n";
@@ -62,9 +66,10 @@ if(! -d $dir)      { die "ERROR directory $dir does not exist"; }
 if(! -s $listfile) { die "ERROR list file $listfile does not exist, or is empty"; }
 my $dir_tail = $dir;
 $dir_tail =~ s/^.+\///; # remove all but last dir
-my $gene_tbl_file = $dir . "/" . $dir_tail . ".gene.tbl";
-my $cds_tbl_file  = $dir . "/" . $dir_tail . ".CDS.tbl";
-my $length_file   = $dir . "/" . $dir_tail . ".length";
+my $gene_tbl_fileuuu = $dir . "/" . $dir_tail . ".gene.tbl";
+my $cds_tbl_file   = $dir . "/" . $dir_tail . ".CDS.tbl";
+my $length_file    = $dir . "/" . $dir_tail . ".length";
+my $out_fetch_root = $dir . "/" . $dir_tail;
 #if(! -s $gene_tbl_file) { die "ERROR $gene_tbl_file does not exist."; }
 if(! -s $cds_tbl_file)  { die "ERROR $cds_tbl_file does not exist."; }
 if(! -s $length_file)   { die "ERROR $length_file does not exist."; }
@@ -89,7 +94,7 @@ open(IN, $listfile) || die "ERROR unable to open $listfile for reading";
 my $waccn = 0; # max length of all accessions
 while(my $accn = <IN>) { 
   chomp $accn;
-  $accn =~ s/\/.[0-9]+//; # remove version
+  stripVersion(\$accn); # remove version
   push(@accn_A, $accn);
   if(length($accn) > $waccn) { $waccn = length($accn); }
 }
@@ -115,7 +120,7 @@ my %totlen_H = (); # key: accession, value length read from length file
 parseLength($length_file, \%totlen_H);
 
 #parseTable($gene_tbl_file, \%gene_tbl_HHA);
-parseTable($cds_tbl_file,  \%cds_tbl_HHA);
+parseTable($cds_tbl_file, \%cds_tbl_HHA);
 
 ########
 # output 
@@ -124,8 +129,13 @@ parseTable($cds_tbl_file,  \%cds_tbl_HHA);
 # the verbose output
 my $wstrand_str = 0;
 my %class_strand_str_H = (); # key: strand string, class number for this strand string 
-my %ct_strand_str_H = ();    # key: strand string, number of accessions in the class defined by this strand string 
-my %fa_strand_str_H = ();    # key: strand string, name of output fasta file for the class defined by this strand string 
+my %ct_strand_str_H = ();    # key: strand string, value: number of accessions in the class defined by this strand string 
+my %idx_strand_str_H = ();   # key: class number,  value: strand string
+my %fa_strand_str_H = ();    # key: strand string, value: name of output fasta file for the class defined by this strand string 
+my %out_strand_str_HA = ();  # key: strand string, value: array of output strings for the class defined by this strand string 
+my @out_fetch_AA = ();       # out_fetch_AA[$c][$i]: for class $c+1, gene $i+1, input for esl-fetch-cds.pl
+my @ct_fetch_AA = ();        # ct_fetch_AA[$c][$i]: for class $c+1, gene $i+1, number of sequences to fetch 
+
 my $class = undef;
 my $nclasses = 0;
 for(my $a = 0; $a < scalar(@accn_A); $a++) { 
@@ -143,39 +153,71 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   my $nbth = 0; 
   my $strand_str = "";
   my @cds_len_A = ();
+  my @cds_coords_A = ();
 
   if(exists ($cds_tbl_HHA{$accn})) { 
     ($ncds, $npos, $nneg, $nunc, $nbth, $strand_str) = getStrandStats(\%cds_tbl_HHA, $accn);
-    getLengthStats(\%cds_tbl_HHA, $accn, \@cds_len_A);
+    getLengthStatsAndCoordStrings(\%cds_tbl_HHA, $accn, \@cds_len_A, \@cds_coords_A);
   }
   if($a == 0) { $wstrand_str = length($strand_str) + 2; }
   
   if(! exists $class_strand_str_H{$strand_str}) { 
     $nclasses++;
     $class_strand_str_H{$strand_str} = $nclasses;
+    $idx_strand_str_H{$nclasses}   = $strand_str;
     $ct_strand_str_H{$strand_str} = 0;
     $fa_strand_str_H{$strand_str} = $dir . "/" . $dir . "." . $nclasses . ".fa";
+    @{$out_strand_str_HA{$strand_str}} = ();
   }
   $class = $class_strand_str_H{$strand_str};
   $ct_strand_str_H{$strand_str}++;
   
-  printf("%-*s  %5d  %5d  %5d  %5d  %5d  %-*s  %3d  %d  ", $waccn, $accn, $ncds, $npos, $nneg, $nbth, $nunc, $wstrand_str, $strand_str, $class, $totlen_H{$accn});
+  my $outline = sprintf("%-*s  %5d  %5d  %5d  %5d  %5d  %-*s  %3d  %d  ", $waccn, $accn, $ncds, $npos, $nneg, $nbth, $nunc, $wstrand_str, $strand_str, $class, $totlen_H{$accn});
   for(my $i = 0; $i < scalar(@cds_len_A); $i++) { 
-    printf("  %5d", $cds_len_A[$i]);
+    $outline .= sprintf("  %5d", $cds_len_A[$i]);
+    # create line of input for esl-fetch-cds.pl for fetching the genes of this genome
+    my $c = $class-1; # note off-by-one
+    if(! exists $out_fetch_AA[$c]) { @{$out_fetch_AA[$c]} = (); }
+    if(! exists $ct_fetch_AA[$c])  { @{$ct_fetch_AA[$c]} = (); }
+    $out_fetch_AA[$c][$i] .= sprintf("%s:%s%d:%s%d\t$cds_coords_A[$i]\n", $head_accn, "class", $class, "gene", ($i+1));
+    $ct_fetch_AA[$c][$i]++;
   }
-  printf("\n");
+  $outline .= "\n";
 
-  # fetch the sequence
-  my $cmd = sprintf("esearch -db nuccore -query \"$accn [ACCN]\" | efetch -format fasta %s %s", ($ct_strand_str_H{$strand_str} > 1) ? ">>" : ">", $fa_strand_str_H{$strand_str});
-  printf("$cmd\n");
-  
+  push(@{$out_strand_str_HA{$strand_str}}, $outline);
+}
+# output stats
+for(my $c = 0; $c < $nclasses; $c++) { 
+  my $strand_str = $idx_strand_str_H{($c+1)};
+  foreach my $outline (@{$out_strand_str_HA{$strand_str}}) { 
+    print $outline;
+  }
+  print "\n";
+  @{$out_strand_str_HA{$strand_str}} = (); # clear it for consise output
+}
+
+# output esl-fetch-cds input, and run esl-fetch-cds.pl for each:
+for(my $c = 0; $c < $nclasses; $c++) { 
+  for(my $i = 0; $i < scalar(@{$out_fetch_AA[$c]}); $i++) { 
+    my $out_fetch_file = $out_fetch_root . ".c" . ($c+1) . ".g" . ($i+1) . ".esl-fetch-cds.in";
+    my $out_fetch_fa   = $out_fetch_root . ".c" . ($c+1) . ".g" . ($i+1) . ".fa";
+    open(OUT, ">" . $out_fetch_file) || die "ERROR unable to open $out_fetch_file for writing";
+    print OUT $out_fetch_AA[$c][$i];
+    close OUT;
+    sleep(0.1);
+    printf("Fetching %3d sequences for class %2d gene %2d ... ", $ct_fetch_AA[$c][$i], $c+1, $i+1);
+    my $cmd = "perl $esl_fetch_cds -nocodon $out_fetch_file > $out_fetch_fa";
+    runCommand($cmd, 0);
+    printf("done. [$out_fetch_fa]\n");
+  }
 }
 
 printf("\n\n");
 # the concise output
 my ($ncds0, $npos0, $nneg0, $nunc0, $nbth0, $strand_str0) = getStrandStats(\%cds_tbl_HHA, $head_accn);
 my @cds_len0_A = (); 
-getLengthStats(\%cds_tbl_HHA, $head_accn, \@cds_len0_A);
+my @cds_coords0_A = (); 
+getLengthStatsAndCoordStrings(\%cds_tbl_HHA, $head_accn, \@cds_len0_A, \@cds_coords0_A);
 
 my $mintotlen = $totlen_H{$head_accn} - ($fraclen * $totlen_H{$head_accn});
 my $maxtotlen = $totlen_H{$head_accn} + ($fraclen * $totlen_H{$head_accn});
@@ -198,9 +240,10 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   my $nbth = 0; 
   my $strand_str = "";
   my @cds_len_A = ();
+  my @cds_coords_A = ();
   if(exists ($cds_tbl_HHA{$accn})) { 
     ($ncds, $npos, $nneg, $nunc, $nbth, $strand_str) = getStrandStats(\%cds_tbl_HHA, $accn);
-    getLengthStats(\%cds_tbl_HHA, $accn, \@cds_len_A);
+    getLengthStatsAndCoordStrings(\%cds_tbl_HHA, $accn, \@cds_len_A, \@cds_coords_A);
   }    
 
   my $output_line = sprintf("%-*s  %s%s%s%s%s%s ", $waccn, $accn,
@@ -232,9 +275,8 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   }
   my $pass_or_fail = ($output_line =~ m/\!/) ? "FAIL" : "PASS";
 
-  print $output_line . " " . $pass_or_fail . "\n";
+  # print $output_line . " " . $pass_or_fail . "\n";
 }
-
 
 #############
 # SUBROUTINES
@@ -432,20 +474,21 @@ sub getStrandStats {
 }
 
 
-# Subroutine: getLengthStats()
+# Subroutine: getLengthStatsAndCoordStrings()
 # Synopsis:   Retreive length stats for an accession
 #             the length of all annotated genes.
 # Args:       $tbl_HHAR:  ref to hash of hash of arrays
 #             $accn:      accession we're interested in
 #             $len_AR:    ref to array to fill with lengths of features in %{$tbl_HAR}
-# Returns:    void; fills @{$len_AR}
+#             $coords_AR: ref to array to fill with coordinates for each gene
+# Returns:    void; fills @{$len_AR} and @{$coords_AR}
 #
-sub getLengthStats { 
-  my $sub_name = "getLengthStats()";
-  my $nargs_exp = 3;
+sub getLengthStatsAndCoordStrings { 
+  my $sub_name = "getLengthStatsAndCoordStrings()";
+  my $nargs_exp = 4;
   if(scalar(@_) != $nargs_exp) { die "ERROR $sub_name entered with wrong number of input args"; }
  
-  my ($tbl_HHAR, $accn, $len_AR) = @_;
+  my ($tbl_HHAR, $accn, $len_AR, $coords_AR) = @_;
 
   if(! exists $tbl_HHAR->{$accn}) { die "ERROR in $sub_name, no data for accession: $accn"; }
   if(! exists $tbl_HHAR->{$accn}{"coords"}) { die "ERROR in $sub_name, no coords data for accession: $accn"; }
@@ -454,7 +497,8 @@ sub getLengthStats {
 
   if ($ngenes > 0) { 
     for(my $i = 0; $i < $ngenes; $i++) { 
-      push(@{$len_AR}, lengthFromCoords($tbl_HHAR->{$accn}{"coords"}[$i]));
+      push(@{$len_AR},    lengthFromCoords($tbl_HHAR->{$accn}{"coords"}[$i]));
+      push(@{$coords_AR}, addAccnToCoords($tbl_HHAR->{$accn}{"coords"}[$i], $accn));
     }
   }
 
@@ -509,6 +553,42 @@ sub lengthFromCoords {
 
   # printf("in lengthFromCoords(): orig_coords: $orig_coords returning length: $length\n");
   return $length;
+}
+
+# Subroutine: addAccnToCoords()
+# Synopsis:   Add accession Determine the length of a region give its coords in NCBI format.
+#
+# Args:       $coords:  the coords string
+#             $accn:    accession to add
+# Returns:    The accession to add to the coords string.
+#
+sub addAccnToCoords { 
+  my $sub_name = "addAccnToCoords()";
+  my $nargs_exp = 2;
+  if(scalar(@_) != $nargs_exp) { die "ERROR $sub_name entered with wrong number of input args"; }
+ 
+  my ($coords, $accn) = @_;
+
+  my $ret_coords = $coords;
+  # deal with simple case of \d+..\d+
+  if($ret_coords =~ /^\d+\.\.\d+/) { 
+    $ret_coords = $accn . ":" . $ret_coords;
+  }
+  # replace 'complement(\d' with 'complement($accn:\d+'
+  while($ret_coords =~ /complement\(\d+/) { 
+    $ret_coords =~ s/complement\((\d+)/complement\($accn:$1/;
+  }
+  # replace 'join(\d' with 'join($accn:\d+'
+  while($ret_coords =~ /join\(\d+/) { 
+    $ret_coords =~ s/join\((\d+)/join\($accn:$1/;
+  }
+  # replace ',\d+' with ',$accn:\d+'
+  while($ret_coords =~ /\,\s*\d+/) { 
+    $ret_coords =~ s/\,\s*(\d+)/\,$accn:$1/;
+  }
+
+  # print("addAccnToCoords(), input $coords, returning $ret_coords\n");
+  return $ret_coords;
 }
 
 # Subroutine: stripVersion()
