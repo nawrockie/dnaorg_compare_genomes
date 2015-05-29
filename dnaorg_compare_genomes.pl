@@ -138,6 +138,9 @@ my @ct_fetch_AA = ();        # ct_fetch_AA[$c][$i]: for class $c+1, gene $i+1, n
 
 my $class = undef;
 my $nclasses = 0;
+my @ngenes_per_class_A = ();
+my $max_ngenes = 0;
+
 for(my $a = 0; $a < scalar(@accn_A); $a++) { 
   my $accn = $accn_A[$a];
 
@@ -159,7 +162,10 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
     ($ncds, $npos, $nneg, $nunc, $nbth, $strand_str) = getStrandStats(\%cds_tbl_HHA, $accn);
     getLengthStatsAndCoordStrings(\%cds_tbl_HHA, $accn, \@cds_len_A, \@cds_coords_A);
   }
-  if($a == 0) { $wstrand_str = length($strand_str) + 2; }
+  if($a == 0) { 
+    $wstrand_str = length($strand_str) + 2; 
+    if($wstrand_str < length("strand-string")) { $wstrand_str = length("strand_string"); }
+  }
   
   if(! exists $class_strand_str_H{$strand_str}) { 
     $nclasses++;
@@ -172,11 +178,13 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   $class = $class_strand_str_H{$strand_str};
   $ct_strand_str_H{$strand_str}++;
   
-  my $outline = sprintf("%-*s  %5d  %5d  %5d  %5d  %5d  %-*s  %3d  %d  ", $waccn, $accn, $ncds, $npos, $nneg, $nbth, $nunc, $wstrand_str, $strand_str, $class, $totlen_H{$accn});
+  my $outline = sprintf("%-*s  %5d  %5d  %5d  %5d  %5d  %-*s  %3d  %7d  ", $waccn, $accn, $ncds, $npos, $nneg, $nbth, $nunc, $wstrand_str, $strand_str, $class, $totlen_H{$accn});
+  if(scalar(@cds_len_A) > $max_ngenes) { $max_ngenes = scalar(@cds_len_A); }
   for(my $i = 0; $i < scalar(@cds_len_A); $i++) { 
     $outline .= sprintf("  %5d", $cds_len_A[$i]);
     # create line of input for esl-fetch-cds.pl for fetching the genes of this genome
     my $c = $class-1; # note off-by-one
+    $ngenes_per_class_A[$c] = scalar(@cds_len_A);
     if(! exists $out_fetch_AA[$c]) { @{$out_fetch_AA[$c]} = (); }
     if(! exists $ct_fetch_AA[$c])  { @{$ct_fetch_AA[$c]} = (); }
     $out_fetch_AA[$c][$i] .= sprintf("%s:%s%d:%s%d\t$cds_coords_A[$i]\n", $head_accn, "class", $class, "gene", ($i+1));
@@ -186,6 +194,14 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
 
   push(@{$out_strand_str_HA{$strand_str}}, $outline);
 }
+# print header line
+printf("#\n");
+printf("#%-*s  %5s  %5s  %5s  %5s  %5s  %-*s  %3s  %7s  ", $waccn-1, "accn", "#cds", "#pos", "#neg", "#both", "#unkn", $wstrand_str, "strand-string", "cls", "tot-len");
+for(my $i = 0; $i < $max_ngenes; $i++) { 
+  printf("  %5s", sprintf("g%d", ($i+1)));
+}
+printf("\n");
+
 # output stats
 for(my $c = 0; $c < $nclasses; $c++) { 
   my $strand_str = $idx_strand_str_H{($c+1)};
@@ -196,6 +212,16 @@ for(my $c = 0; $c < $nclasses; $c++) {
   @{$out_strand_str_HA{$strand_str}} = (); # clear it for consise output
 }
 
+# summarize:
+printf("\nNumber-of-classes:                 $nclasses\n");
+my $tot_ngenes = 0;
+for(my $c = 0; $c < $nclasses; $c++) { 
+  printf("Number-of-genes-in-class-%d:        %d\n", ($c+1), $ngenes_per_class_A[$c]);
+  $tot_ngenes += $ngenes_per_class_A[$c];
+}
+printf("Average-number-of-genes-per-class: %.1f\n", $tot_ngenes / $nclasses);
+printf("\n");
+
 # output esl-fetch-cds input, and run esl-fetch-cds.pl for each:
 for(my $c = 0; $c < $nclasses; $c++) { 
   for(my $i = 0; $i < scalar(@{$out_fetch_AA[$c]}); $i++) { 
@@ -205,13 +231,18 @@ for(my $c = 0; $c < $nclasses; $c++) {
     print OUT $out_fetch_AA[$c][$i];
     close OUT;
     sleep(0.1);
-    printf("Fetching %3d sequences for class %2d gene %2d ... ", $ct_fetch_AA[$c][$i], $c+1, $i+1);
+    printf("# Fetching %3d sequences for class %2d gene %2d ... ", $ct_fetch_AA[$c][$i], $c+1, $i+1);
     my $cmd = "perl $esl_fetch_cds -nocodon $out_fetch_file > $out_fetch_fa";
     runCommand($cmd, 0);
     printf("done. [$out_fetch_fa]\n");
   }
 }
 
+
+########################################################
+# CURRENTLY NO CONCISE OUTPUT IS PRINTED, BUT I'VE
+# LEFT THE BELOW CODE BLOCK FOR REFERENCE AND/OR FUTURE USE
+#
 printf("\n\n");
 # the concise output
 my ($ncds0, $npos0, $nneg0, $nunc0, $nbth0, $strand_str0) = getStrandStats(\%cds_tbl_HHA, $head_accn);
@@ -277,6 +308,7 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
 
   # print $output_line . " " . $pass_or_fail . "\n";
 }
+
 
 #############
 # SUBROUTINES
