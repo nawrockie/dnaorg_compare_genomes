@@ -7,8 +7,8 @@ use Getopt::Long;
 use Time::HiRes qw(gettimeofday);
 
 # hard-coded-paths:
-#my $esl_fetch_cds = "/panfs/pan1/dnaorg/programs/esl-fetch-cds.pl";
-my $esl_fetch_cds = "/home/nawrocke/notebook/15_0518_dnaorg_virus_compare_script/wd-esl-fetch-cds/esl-fetch-cds.pl";
+my $esl_fetch_cds = "/panfs/pan1/dnaorg/programs/esl-fetch-cds.pl";
+#my $esl_fetch_cds = "/home/nawrocke/notebook/15_0518_dnaorg_virus_compare_script/wd-esl-fetch-cds/esl-fetch-cds.pl";
 
 # The definition of $usage explains the script and usage:
 my $usage = "\ndnaorg_compare_genomes.pl\n";
@@ -32,7 +32,7 @@ my $be_verbose = 1;
 my $df_fraclen = 0.1;
 my $fraclen = undef;
 
-&GetOptions( "t"        => \$fraclen);
+&GetOptions( "t" => \$fraclen);
 
 
 if(scalar(@ARGV) != 2) { die $usage; }
@@ -176,17 +176,18 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
     @{$out_strand_str_HA{$strand_str}} = ();
   }
   $class = $class_strand_str_H{$strand_str};
+  my $c = $class - 1;
   $ct_strand_str_H{$strand_str}++;
+  my $ngenes = scalar(@cds_len_A);
+  $ngenes_per_class_A[($class-1)] = $ngenes;
+  if($ngenes > $max_ngenes) { $max_ngenes = $ngenes; }
+  if(! exists $out_fetch_AA[$c]) { @{$out_fetch_AA[$c]} = (); }
+  if(! exists $ct_fetch_AA[$c])  { @{$ct_fetch_AA[$c]} = (); }
   
   my $outline = sprintf("%-*s  %5d  %5d  %5d  %5d  %5d  %-*s  %3d  %7d  ", $waccn, $accn, $ncds, $npos, $nneg, $nbth, $nunc, $wstrand_str, $strand_str, $class, $totlen_H{$accn});
-  if(scalar(@cds_len_A) > $max_ngenes) { $max_ngenes = scalar(@cds_len_A); }
-  for(my $i = 0; $i < scalar(@cds_len_A); $i++) { 
+  for(my $i = 0; $i < $ngenes; $i++) { 
     $outline .= sprintf("  %5d", $cds_len_A[$i]);
     # create line of input for esl-fetch-cds.pl for fetching the genes of this genome
-    my $c = $class-1; # note off-by-one
-    $ngenes_per_class_A[$c] = scalar(@cds_len_A);
-    if(! exists $out_fetch_AA[$c]) { @{$out_fetch_AA[$c]} = (); }
-    if(! exists $ct_fetch_AA[$c])  { @{$ct_fetch_AA[$c]} = (); }
     $out_fetch_AA[$c][$i] .= sprintf("%s:%s%d:%s%d\t$cds_coords_A[$i]\n", $head_accn, "class", $class, "gene", ($i+1));
     $ct_fetch_AA[$c][$i]++;
   }
@@ -603,23 +604,23 @@ sub addAccnToCoords {
 
   my $ret_coords = $coords;
   # deal with simple case of \d+..\d+
-  if($ret_coords =~ /^\d+\.\.\d+/) { 
+  if($ret_coords =~ /^\>?\<?\d+\.\.\>?\<?\d+/) { 
     $ret_coords = $accn . ":" . $ret_coords;
   }
   # replace 'complement(\d' with 'complement($accn:\d+'
-  while($ret_coords =~ /complement\(\d+/) { 
-    $ret_coords =~ s/complement\((\d+)/complement\($accn:$1/;
+  while($ret_coords =~ /complement\(\>?\<?\d+/) { 
+    $ret_coords =~ s/complement\((\>?\<?\d+)/complement\($accn:$1/;
   }
   # replace 'join(\d' with 'join($accn:\d+'
-  while($ret_coords =~ /join\(\d+/) { 
-    $ret_coords =~ s/join\((\d+)/join\($accn:$1/;
+  while($ret_coords =~ /join\(\>?\<?\d+/) { 
+    $ret_coords =~ s/join\((\>?\<?\d+)/join\($accn:$1/;
   }
   # replace ',\d+' with ',$accn:\d+'
-  while($ret_coords =~ /\,\s*\d+/) { 
-    $ret_coords =~ s/\,\s*(\d+)/\,$accn:$1/;
+  while($ret_coords =~ /\,\s*\>?\<?\d+/) { 
+    $ret_coords =~ s/\,\s*(\>?\<?\d+)/\,$accn:$1/;
   }
 
-  # print("addAccnToCoords(), input $coords, returning $ret_coords\n");
+  #print("addAccnToCoords(), input $coords, returning $ret_coords\n");
   return $ret_coords;
 }
 
