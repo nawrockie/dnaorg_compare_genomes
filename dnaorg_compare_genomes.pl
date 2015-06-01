@@ -604,20 +604,20 @@ sub addAccnToCoords {
 
   my $ret_coords = $coords;
   # deal with simple case of \d+..\d+
-  if($ret_coords =~ /^\>?\<?\d+\.\.\>?\<?\d+/) { 
+  if($ret_coords =~ /^\<?\d+\.\.\>?\d+/) { 
     $ret_coords = $accn . ":" . $ret_coords;
   }
   # replace 'complement(\d' with 'complement($accn:\d+'
-  while($ret_coords =~ /complement\(\>?\<?\d+/) { 
-    $ret_coords =~ s/complement\((\>?\<?\d+)/complement\($accn:$1/;
+  while($ret_coords =~ /complement\(\<?\d+/) { 
+    $ret_coords =~ s/complement\((\<?\d+)/complement\($accn:$1/;
   }
   # replace 'join(\d' with 'join($accn:\d+'
-  while($ret_coords =~ /join\(\>?\<?\d+/) { 
-    $ret_coords =~ s/join\((\>?\<?\d+)/join\($accn:$1/;
+  while($ret_coords =~ /join\(\<?\d+/) { 
+    $ret_coords =~ s/join\((\<?\d+)/join\($accn:$1/;
   }
   # replace ',\d+' with ',$accn:\d+'
-  while($ret_coords =~ /\,\s*\>?\<?\d+/) { 
-    $ret_coords =~ s/\,\s*(\>?\<?\d+)/\,$accn:$1/;
+  while($ret_coords =~ /\,\s*\<?\d+/) { 
+    $ret_coords =~ s/\,\s*(\<?\d+)/\,$accn:$1/;
   }
 
   #print("addAccnToCoords(), input $coords, returning $ret_coords\n");
