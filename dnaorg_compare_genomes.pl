@@ -213,14 +213,22 @@ for(my $c = 0; $c < $nclasses; $c++) {
   @{$out_strand_str_HA{$strand_str}} = (); # clear it for consise output
 }
 
-# summarize:
-printf("\nNumber-of-classes:                 $nclasses\n");
+# summarize
+#
+printf("\n");
+printf("# Number-of-classes: $nclasses\n");
+printf("# class  #accn  #genes  strand-string\n");
+printf("# -----  -----  ------  -------------\n");
 my $tot_ngenes = 0;
+my $tot_ct = 0;
 for(my $c = 0; $c < $nclasses; $c++) { 
-  printf("Number-of-genes-in-class-%d:        %d\n", ($c+1), $ngenes_per_class_A[$c]);
+  my $strand_str = $idx_strand_str_H{($c+1)};
+  printf("%7d  %5d  %6d  %s\n", ($c+1), $ct_strand_str_H{$strand_str}, $ngenes_per_class_A[$c], $strand_str);
   $tot_ngenes += $ngenes_per_class_A[$c];
+  $tot_ct     += $ct_strand_str_H{$strand_str};
 }
-printf("Average-number-of-genes-per-class: %.1f\n", $tot_ngenes / $nclasses);
+printf("# -----  -----  ------  -------------\n");
+printf("%7s  %5.1f  %6.1f  %s\n", "avg", $tot_ct / $nclasses, $tot_ngenes / $nclasses, "N/A");
 printf("\n");
 
 # output esl-fetch-cds input, and run esl-fetch-cds.pl for each:
