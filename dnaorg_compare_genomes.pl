@@ -228,7 +228,8 @@ for(my $c = 0; $c < $nclasses; $c++) {
   $tot_ct     += $ct_strand_str_H{$strand_str};
 }
 printf("# -----  -----  ------  -------------\n");
-printf("%7s  %5.1f  %6.1f  %s\n", "avg", $tot_ct / $nclasses, $tot_ngenes / $nclasses, "N/A");
+printf("%7s  %5d  %6d  %s\n", "total",     $tot_ct,             $tot_ngenes,             "N/A");
+printf("%7s  %5.1f  %6.1f  %s\n", "avg",   $tot_ct / $nclasses, $tot_ngenes / $nclasses, "N/A");
 printf("\n");
 
 # output esl-fetch-cds input, and run esl-fetch-cds.pl for each:
