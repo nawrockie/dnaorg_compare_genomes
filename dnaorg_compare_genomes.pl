@@ -7,6 +7,7 @@ use Getopt::Long;
 use Time::HiRes qw(gettimeofday);
 
 # hard-coded-paths:
+my $idfetch       = "/netopt/ncbi_tools64/bin/idfetch";
 my $esl_fetch_cds = "/panfs/pan1/dnaorg/programs/esl-fetch-cds.pl";
 #my $esl_fetch_cds = "/home/nawrocke/notebook/15_0518_dnaorg_virus_compare_script/wd-esl-fetch-cds/esl-fetch-cds.pl";
 
@@ -23,6 +24,7 @@ $usage .= " subsequently 'parse-ftable.pl'.\n";
 $usage .= "\n";
 $usage .= " BASIC OPTIONS:\n";
 $usage .= "  -t <f>  : fractional length difference threshold for mismatch [default: 0.1]\n";
+$usage .= "  -s      : use short names: all CDS seqs will be named as sequence accession\n";
 $usage .= "\n";
 
 my ($seconds, $microseconds) = gettimeofday();
@@ -31,9 +33,10 @@ my $executable = $0;
 my $be_verbose = 1;
 my $df_fraclen = 0.1;
 my $fraclen = undef;
+my $do_shortnames = 0;
 
-&GetOptions( "t" => \$fraclen);
-
+&GetOptions( "t" => \$fraclen, 
+             "s" => \$do_shortnames);
 
 if(scalar(@ARGV) != 2) { die $usage; }
 my ($dir, $listfile) = (@ARGV);
@@ -46,6 +49,10 @@ my $opts_used_long  = "";
 if(defined $fraclen) { 
   $opts_used_short .= "-t $fraclen";
   $opts_used_long  .= "# option:  setting fractional length threshold to $fraclen [-t]\n";
+}
+if(defined $do_shortnames) { 
+  $opts_used_short .= "-s ";
+  $opts_used_long  .= "# option:  outputting CDS names as accessions [-s]\n";
 }
 
 # check for incompatible option values/combinations:
@@ -66,7 +73,7 @@ if(! -d $dir)      { die "ERROR directory $dir does not exist"; }
 if(! -s $listfile) { die "ERROR list file $listfile does not exist, or is empty"; }
 my $dir_tail = $dir;
 $dir_tail =~ s/^.+\///; # remove all but last dir
-my $gene_tbl_fileuuu = $dir . "/" . $dir_tail . ".gene.tbl";
+#my $gene_tbl_file  = $dir . "/" . $dir_tail . ".gene.tbl";
 my $cds_tbl_file   = $dir . "/" . $dir_tail . ".CDS.tbl";
 my $length_file    = $dir . "/" . $dir_tail . ".length";
 my $out_fetch_root = $dir . "/" . $dir_tail;
@@ -133,8 +140,10 @@ my %ct_strand_str_H = ();    # key: strand string, value: number of accessions i
 my %idx_strand_str_H = ();   # key: class number,  value: strand string
 my %fa_strand_str_H = ();    # key: strand string, value: name of output fasta file for the class defined by this strand string 
 my %out_strand_str_HA = ();  # key: strand string, value: array of output strings for the class defined by this strand string 
-my @out_fetch_AA = ();       # out_fetch_AA[$c][$i]: for class $c+1, gene $i+1, input for esl-fetch-cds.pl
-my @ct_fetch_AA = ();        # ct_fetch_AA[$c][$i]: for class $c+1, gene $i+1, number of sequences to fetch 
+my @out_fetch_gnm_A = ();    # out_fetch_gnm_A[$c]: for class $c+1, input for idfetch to fetch full genome seqs
+my @ct_fetch_gnm_A = ();     # ct_fetch_gnm_A[$c]:  for class $c+1, number of genomes to fetch
+my @out_fetch_cds_AA = ();   # out_fetch_cds_AA[$c][$i]: for class $c+1, gene $i+1, input for esl-fetch-cds.pl
+my @ct_fetch_cds_AA = ();    # ct_fetch_cds_AA[$c][$i]:  for class $c+1, gene $i+1, number of sequences to fetch 
 
 my $class = undef;
 my $nclasses = 0;
@@ -181,15 +190,23 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   my $ngenes = scalar(@cds_len_A);
   $ngenes_per_class_A[($class-1)] = $ngenes;
   if($ngenes > $max_ngenes) { $max_ngenes = $ngenes; }
-  if(! exists $out_fetch_AA[$c]) { @{$out_fetch_AA[$c]} = (); }
-  if(! exists $ct_fetch_AA[$c])  { @{$ct_fetch_AA[$c]} = (); }
+  if(! exists $out_fetch_cds_AA[$c]) { @{$out_fetch_cds_AA[$c]} = (); }
+  if(! exists $ct_fetch_cds_AA[$c])  { @{$ct_fetch_cds_AA[$c]} = (); }
   
   my $outline = sprintf("%-*s  %5d  %5d  %5d  %5d  %5d  %-*s  %3d  %7d  ", $waccn, $accn, $ncds, $npos, $nneg, $nbth, $nunc, $wstrand_str, $strand_str, $class, $totlen_H{$accn});
+  $out_fetch_gnm_A[$c] .= sprintf("%s\n", $accn);
+  $ct_fetch_gnm_A[$c]++;
+
   for(my $i = 0; $i < $ngenes; $i++) { 
     $outline .= sprintf("  %5d", $cds_len_A[$i]);
     # create line of input for esl-fetch-cds.pl for fetching the genes of this genome
-    $out_fetch_AA[$c][$i] .= sprintf("%s:%s%d:%s%d\t$cds_coords_A[$i]\n", $head_accn, "class", $class, "gene", ($i+1));
-    $ct_fetch_AA[$c][$i]++;
+    if($do_shortnames) { 
+      $out_fetch_cds_AA[$c][$i] .= "$accn\t$cds_coords_A[$i]\n";
+    }
+    else { 
+      $out_fetch_cds_AA[$c][$i] .= sprintf("%s:%s%d:%s%d\t$cds_coords_A[$i]\n", $head_accn, "class", $class, "gene", ($i+1));
+    }
+    $ct_fetch_cds_AA[$c][$i]++;
   }
   $outline .= "\n";
 
@@ -234,17 +251,56 @@ printf("\n");
 
 # output esl-fetch-cds input, and run esl-fetch-cds.pl for each:
 for(my $c = 0; $c < $nclasses; $c++) { 
-  for(my $i = 0; $i < scalar(@{$out_fetch_AA[$c]}); $i++) { 
-    my $out_fetch_file = $out_fetch_root . ".c" . ($c+1) . ".g" . ($i+1) . ".esl-fetch-cds.in";
-    my $out_fetch_fa   = $out_fetch_root . ".c" . ($c+1) . ".g" . ($i+1) . ".fa";
-    open(OUT, ">" . $out_fetch_file) || die "ERROR unable to open $out_fetch_file for writing";
-    print OUT $out_fetch_AA[$c][$i];
+  # fetch the full genomes
+  my $out_fetch_gnm_file   = $out_fetch_root . ".c" . ($c+1) . ".fg.idfetch.in";
+  my $tmp_out_fetch_gnm_fa = $out_fetch_root . ".c" . ($c+1) . ".fg.fa.tmp";
+  my $out_fetch_gnm_fa     = $out_fetch_root . ".c" . ($c+1) . ".fg.fa";
+  open(OUT, ">" . $out_fetch_gnm_file) || die "ERROR unable to open $out_fetch_gnm_file for writing";
+  print OUT $out_fetch_gnm_A[$c];
+  close OUT;
+  sleep(0.1);
+  printf("# Fetching %3d full genome sequences for class %2d ... ", $ct_fetch_gnm_A[$c], $c+1);
+  my $cmd = "$idfetch -t 5 -c 1 -G $out_fetch_gnm_file > $tmp_out_fetch_gnm_fa";
+  runCommand($cmd, 0);
+  # now open up the file and change the sequence names manually
+  open(IN, $tmp_out_fetch_gnm_fa)    || die "ERROR unable to open $tmp_out_fetch_gnm_fa for reading";
+  open(OUT, ">" . $out_fetch_gnm_fa) || die "ERROR unable to open $out_fetch_gnm_fa for writing";
+  while(my $line = <IN>) { 
+    if($line =~ m/^>/) { 
+      chomp $line;
+      if($line =~ /^>.*\|(\S+)\|\s+(.+)$/) { 
+        print OUT (">$1 $2\n");
+      }
+      else { die "ERROR unable to parse defline $line in file $tmp_out_fetch_gnm_fa"; }
+    }
+    else { print OUT $line; }
+  }
+  close(IN);
+  close(OUT);
+  unlink $tmp_out_fetch_gnm_fa;
+  printf("done. [$out_fetch_gnm_fa]\n");
+
+  # fetch the cds'
+  for(my $i = 0; $i < scalar(@{$out_fetch_cds_AA[$c]}); $i++) { 
+    my $out_fetch_cds_file = $out_fetch_root . ".c" . ($c+1) . ".g" . ($i+1) . ".esl-fetch-cds.in";
+    my $out_fetch_cds_fa   = $out_fetch_root . ".c" . ($c+1) . ".g" . ($i+1) . ".fa";
+    open(OUT, ">" . $out_fetch_cds_file) || die "ERROR unable to open $out_fetch_cds_file for writing";
+    print OUT $out_fetch_cds_AA[$c][$i];
     close OUT;
     sleep(0.1);
-    printf("# Fetching %3d sequences for class %2d gene %2d ... ", $ct_fetch_AA[$c][$i], $c+1, $i+1);
-    my $cmd = "perl $esl_fetch_cds -nocodon $out_fetch_file > $out_fetch_fa";
+    printf("# Fetching %3d CDS sequences for class %2d gene %2d ... ", $ct_fetch_cds_AA[$c][$i], $c+1, $i+1);
+    my $cmd = "";
+    if($do_shortnames) { 
+      $cmd = "perl $esl_fetch_cds -onlyaccn $out_fetch_cds_file > $out_fetch_cds_fa";
+      printf("$cmd\n");
+    }
+    else { 
+      $cmd = "perl $esl_fetch_cds -nocodon $out_fetch_cds_file > $out_fetch_cds_fa";
+      printf("$cmd\n");
+    }
     runCommand($cmd, 0);
-    printf("done. [$out_fetch_fa]\n");
+
+    printf("done. [$out_fetch_cds_fa]\n");
   }
 }
 
