@@ -10,6 +10,12 @@ use Time::HiRes qw(gettimeofday);
 my $idfetch       = "/netopt/ncbi_tools64/bin/idfetch";
 my $esl_fetch_cds = "/panfs/pan1/dnaorg/programs/esl-fetch-cds.pl";
 #my $esl_fetch_cds = "/home/nawrocke/notebook/15_0518_dnaorg_virus_compare_script/wd-esl-fetch-cds/esl-fetch-cds.pl";
+my $usearch       = "/panfs/pan1.be-md.ncbi.nlm.nih.gov/dnaorg/2015.05.29/usearch";
+
+my $do_uc    = 0; 
+my $uc_id    = undef;
+my $df_uc_id = 0.9;
+my $nuc      = 0;   # number of uclust commands written to uclust script
 
 # The definition of $usage explains the script and usage:
 my $usage = "\ndnaorg_compare_genomes.pl\n";
@@ -23,8 +29,10 @@ $usage .= " created by running 'dnaorg_fetch_dna_wrapper.pl -ftable' and\n";
 $usage .= " subsequently 'parse-ftable.pl'.\n";
 $usage .= "\n";
 $usage .= " BASIC OPTIONS:\n";
-$usage .= "  -t <f>  : fractional length difference threshold for mismatch [default: 0.1]\n";
-$usage .= "  -s      : use short names: all CDS seqs will be named as sequence accession\n";
+$usage .= "  -t <f>     : fractional length difference threshold for mismatch [default: 0.1]\n";
+$usage .= "  -s         : use short names: all CDS seqs will be named as sequence accession\n";
+$usage .= "  -uc        : create a shell script to run uclust jobs for all fasta files\n";
+$usage .= "  -uc_id <f> : with -uc, set sequence identity cutoff to <f> [default: $df_uc_id]\n";
 $usage .= "\n";
 
 my ($seconds, $microseconds) = gettimeofday();
@@ -35,8 +43,10 @@ my $df_fraclen = 0.1;
 my $fraclen = undef;
 my $do_shortnames = 0;
 
-&GetOptions( "t" => \$fraclen, 
-             "s" => \$do_shortnames);
+&GetOptions( "t"     => \$fraclen, 
+             "s"     => \$do_shortnames, 
+             "uc"    => \$do_uc, 
+             "uc_id" => \$uc_id);
 
 if(scalar(@ARGV) != 2) { die $usage; }
 my ($dir, $listfile) = (@ARGV);
@@ -54,15 +64,29 @@ if(defined $do_shortnames) {
   $opts_used_short .= "-s ";
   $opts_used_long  .= "# option:  outputting CDS names as accessions [-s]\n";
 }
+if(defined $do_uc) { 
+  $opts_used_short .= "-uc ";
+  $opts_used_long  .= "# option:  outputting uclust shell script [-uc]\n";
+}
+if(defined $uc_id) { 
+  $opts_used_short .= "-uc_id ";
+  $opts_used_long  .= "# option:  uclust cluster identity set to $uc_id [-uc_id]\n";
+}
 
 # check for incompatible option values/combinations:
 if(defined $fraclen && ($fraclen < 0 || $fraclen > 1)) { 
   die "ERROR with -t <f>, <f> must be a number between 0 and 1."; 
 }
+if((! $do_uc) && (defined $uc_id)) { 
+  die "ERROR -uc_id requires -uc";
+}
 
-# set fractional length threshold if user didn't on the command line
+# set default values if user didn't specify otherwise on the command line
 if(! defined $fraclen) { 
   $fraclen = $df_fraclen; 
+}
+if(! defined $uc_id) { 
+  $uc_id = $df_uc_id;
 }
 
 ###############
@@ -76,7 +100,7 @@ $dir_tail =~ s/^.+\///; # remove all but last dir
 #my $gene_tbl_file  = $dir . "/" . $dir_tail . ".gene.tbl";
 my $cds_tbl_file   = $dir . "/" . $dir_tail . ".CDS.tbl";
 my $length_file    = $dir . "/" . $dir_tail . ".length";
-my $out_fetch_root = $dir . "/" . $dir_tail;
+my $out_root = $dir . "/" . $dir_tail;
 #if(! -s $gene_tbl_file) { die "ERROR $gene_tbl_file does not exist."; }
 if(! -s $cds_tbl_file)  { die "ERROR $cds_tbl_file does not exist."; }
 if(! -s $length_file)   { die "ERROR $length_file does not exist."; }
@@ -149,6 +173,8 @@ my $class = undef;
 my $nclasses = 0;
 my @ngenes_per_class_A = ();
 my $max_ngenes = 0;
+
+my $uc_script = $out_root . ".uclust.sh";
 
 for(my $a = 0; $a < scalar(@accn_A); $a++) { 
   my $accn = $accn_A[$a];
@@ -249,12 +275,16 @@ printf("%7s  %5d  %6d  %s\n", "total",     $tot_ct,             $tot_ngenes,    
 printf("%7s  %5.1f  %6.1f  %s\n", "avg",   $tot_ct / $nclasses, $tot_ngenes / $nclasses, "N/A");
 printf("\n");
 
+if($do_uc) { 
+  open(UC, ">" . $uc_script);
+}
+
 # output esl-fetch-cds input, and run esl-fetch-cds.pl for each:
 for(my $c = 0; $c < $nclasses; $c++) { 
   # fetch the full genomes
-  my $out_fetch_gnm_file   = $out_fetch_root . ".c" . ($c+1) . ".fg.idfetch.in";
-  my $tmp_out_fetch_gnm_fa = $out_fetch_root . ".c" . ($c+1) . ".fg.fa.tmp";
-  my $out_fetch_gnm_fa     = $out_fetch_root . ".c" . ($c+1) . ".fg.fa";
+  my $out_fetch_gnm_file   = $out_root . ".c" . ($c+1) . ".fg.idfetch.in";
+  my $tmp_out_fetch_gnm_fa = $out_root . ".c" . ($c+1) . ".fg.fa.tmp";
+  my $out_fetch_gnm_fa     = $out_root . ".c" . ($c+1) . ".fg.fa";
   open(OUT, ">" . $out_fetch_gnm_file) || die "ERROR unable to open $out_fetch_gnm_file for writing";
   print OUT $out_fetch_gnm_A[$c];
   close OUT;
@@ -282,8 +312,13 @@ for(my $c = 0; $c < $nclasses; $c++) {
 
   # fetch the cds'
   for(my $i = 0; $i < scalar(@{$out_fetch_cds_AA[$c]}); $i++) { 
-    my $out_fetch_cds_file = $out_fetch_root . ".c" . ($c+1) . ".g" . ($i+1) . ".esl-fetch-cds.in";
-    my $out_fetch_cds_fa   = $out_fetch_root . ".c" . ($c+1) . ".g" . ($i+1) . ".fa";
+    my $cg_substr = ".c" . ($c+1) . ".g" . ($i+1);
+    my $out_fetch_cds_file = $out_root . $cg_substr . ".esl-fetch-cds.in";
+    my $out_fetch_cds_fa   = $out_root . $cg_substr . ".fa";
+    my $np_out_fetch_cds_fa    = stripPath($out_fetch_cds_fa);
+    my $np_out_centroids_fa    = stripPath($out_root . $cg_substr . ".centroids.fa");
+    my $np_out_uclust_sum_file = stripPath($out_root . $cg_substr . ".cluster_summary.txt");
+    my $np_out_msa_root        = stripPath($out_root . $cg_substr . ".msa_cluster_");
     open(OUT, ">" . $out_fetch_cds_file) || die "ERROR unable to open $out_fetch_cds_file for writing";
     print OUT $out_fetch_cds_AA[$c][$i];
     close OUT;
@@ -296,14 +331,22 @@ for(my $c = 0; $c < $nclasses; $c++) {
     }
     else { 
       $cmd = "perl $esl_fetch_cds -nocodon $out_fetch_cds_file > $out_fetch_cds_fa";
-      printf("$cmd\n");
     }
     runCommand($cmd, 0);
 
     printf("done. [$out_fetch_cds_fa]\n");
+
+    if($do_uc){ 
+      print UC ("$usearch -cluster_fast $np_out_fetch_cds_fa -id $uc_id -centroids $np_out_centroids_fa -uc $np_out_uclust_sum_file -msaout $np_out_msa_root\n");
+      $nuc++;
+    }
   }
 }
 
+if($do_uc) { 
+  close(UC);
+  printf("#\n# Shell script for running $nuc usearch commands saved to $uc_script.\n");
+}
 
 ########################################################
 # CURRENTLY NO CONCISE OUTPUT IS PRINTED, BUT I'VE
@@ -703,4 +746,20 @@ sub stripVersion {
   $$accver_R =~ s/\.[0-9]*$//; # strip version
 
   return;
+}
+
+# Subroutine: stripPath()
+# Purpose:    Given a file path, remove the all directories and leave only the file name.
+# Args:       $filename: full path to file
+# Returns:    only the file name, without any directory structure
+sub stripPath {
+  my $sub_name  = "stripPath()";
+  my $nargs_exp = 1;
+  if(scalar(@_) != $nargs_exp) { die "ERROR $sub_name entered with wrong number of input args"; }
+  
+  my ($filename) = (@_);
+
+  $filename =~ s/^.+\///;
+
+  return $filename;
 }
