@@ -235,6 +235,17 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   $ct_fetch_gnm_A[$c]++;
 
   for(my $i = 0; $i < $ngenes; $i++) { 
+    my $desc = "";
+    if($do_product) { 
+      $desc = "\tDESCRIPTION:product:";
+      if(scalar(@cds_product_A) > 0) { 
+        if($i >= scalar(@cds_product_A)) { die "ERROR ran out of products too early for $accn\n"; }
+        $desc .= $cds_product_A[$i];
+      }
+      else { 
+        $desc .= "none-annotated";
+      }
+    }
     $outline .= sprintf("  %5d", $cds_len_A[$i]);
     # create line of input for esl-fetch-cds.pl for fetching the genes of this genome
     if($do_shortnames) { 
@@ -243,20 +254,7 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
     else { 
       $out_fetch_cds_AA[$c][$i] .= sprintf("%s:%s%d:%s%d\t$cds_coords_A[$i]", $head_accn, "class", $class, "gene", ($i+1));
     }
-    if($do_product) { 
-      my $desc = "\tDESCRIPTION:product:";
-      if(scalar(@cds_product_A) > 0) { 
-        $desc .= $cds_product_A[0];
-        for(my $p = 1; $p < scalar(@cds_product_A); $p++) { 
-          $desc .= "," . $cds_product_A[$p];
-        }
-      }
-      else { 
-        $desc .= "none-annotated";
-      }
-      $out_fetch_cds_AA[$c][$i] .= $desc;
-    }
-    $out_fetch_cds_AA[$c][$i] .= "\n";
+    $out_fetch_cds_AA[$c][$i] .= $desc . "\n"; # $desc will be "" unless $do_product is true
     $ct_fetch_cds_AA[$c][$i]++;
   }
   $outline .= "\n";
