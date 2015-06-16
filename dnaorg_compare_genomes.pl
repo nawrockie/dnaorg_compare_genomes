@@ -31,22 +31,25 @@ $usage .= "\n";
 $usage .= " BASIC OPTIONS:\n";
 $usage .= "  -t <f>     : fractional length difference threshold for mismatch [default: 0.1]\n";
 $usage .= "  -s         : use short names: all CDS seqs will be named as sequence accession\n";
+$usage .= "  -product   : add CDS 'product' qualifier value to output sequence files deflines\n";
 $usage .= "  -uc        : create a shell script to run uclust jobs for all fasta files\n";
 $usage .= "  -uc_id <f> : with -uc, set sequence identity cutoff to <f> [default: $df_uc_id]\n";
 $usage .= "\n";
 
 my ($seconds, $microseconds) = gettimeofday();
-my $start_secs = ($seconds + ($microseconds / 1000000.));
-my $executable = $0;
-my $be_verbose = 1;
-my $df_fraclen = 0.1;
-my $fraclen = undef;
-my $do_shortnames = 0;
+my $start_secs    = ($seconds + ($microseconds / 1000000.));
+my $executable    = $0;
+my $be_verbose    = 1;
+my $df_fraclen    = 0.1;
+my $fraclen       = undef;
+my $do_shortnames = 0; # changed to '1' if -s enabled
+my $do_product    = 0; # changed to '1' if -product enabled
 
-&GetOptions( "t"     => \$fraclen, 
-             "s"     => \$do_shortnames, 
-             "uc"    => \$do_uc, 
-             "uc_id" => \$uc_id);
+&GetOptions( "t"       => \$fraclen, 
+             "s"       => \$do_shortnames, 
+             "product" => \$do_product,
+             "uc"      => \$do_uc, 
+             "uc_id"   => \$uc_id);
 
 if(scalar(@ARGV) != 2) { die $usage; }
 my ($dir, $listfile) = (@ARGV);
@@ -63,6 +66,10 @@ if(defined $fraclen) {
 if(defined $do_shortnames) { 
   $opts_used_short .= "-s ";
   $opts_used_long  .= "# option:  outputting CDS names as accessions [-s]\n";
+}
+if(defined $do_product) { 
+  $opts_used_short .= "-product ";
+  $opts_used_long  .= "# option:  adding \'product\' qualifier values to output sequence file deflines [-product]\n";
 }
 if(defined $do_uc) { 
   $opts_used_short .= "-uc ";
@@ -192,10 +199,14 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   my $strand_str = "";
   my @cds_len_A = ();
   my @cds_coords_A = ();
+  my @cds_product_A = (); # will remain empty unless $do_product is 1 (-product enabled at cmdline)
 
   if(exists ($cds_tbl_HHA{$accn})) { 
     ($ncds, $npos, $nneg, $nunc, $nbth, $strand_str) = getStrandStats(\%cds_tbl_HHA, $accn);
     getLengthStatsAndCoordStrings(\%cds_tbl_HHA, $accn, \@cds_len_A, \@cds_coords_A);
+    if($do_product) { 
+      getQualifierValues(\%cds_tbl_HHA, $accn, "product", \@cds_product_A);
+    }
   }
   if($a == 0) { 
     $wstrand_str = length($strand_str) + 2; 
@@ -227,11 +238,25 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
     $outline .= sprintf("  %5d", $cds_len_A[$i]);
     # create line of input for esl-fetch-cds.pl for fetching the genes of this genome
     if($do_shortnames) { 
-      $out_fetch_cds_AA[$c][$i] .= "$accn\t$cds_coords_A[$i]\n";
+      $out_fetch_cds_AA[$c][$i] .= "$accn\t$cds_coords_A[$i]";
     }
     else { 
-      $out_fetch_cds_AA[$c][$i] .= sprintf("%s:%s%d:%s%d\t$cds_coords_A[$i]\n", $head_accn, "class", $class, "gene", ($i+1));
+      $out_fetch_cds_AA[$c][$i] .= sprintf("%s:%s%d:%s%d\t$cds_coords_A[$i]", $head_accn, "class", $class, "gene", ($i+1));
     }
+    if($do_product) { 
+      my $desc = "\tDESCRIPTION:product:";
+      if(scalar(@cds_product_A) > 0) { 
+        $desc .= $cds_product_A[0];
+        for(my $p = 1; $p < scalar(@cds_product_A); $p++) { 
+          $desc .= "," . $cds_product_A[$p];
+        }
+      }
+      else { 
+        $desc .= "none-annotated";
+      }
+      $out_fetch_cds_AA[$c][$i] .= $desc;
+    }
+    $out_fetch_cds_AA[$c][$i] .= "\n";
     $ct_fetch_cds_AA[$c][$i]++;
   }
   $outline .= "\n";
@@ -640,6 +665,36 @@ sub getLengthStatsAndCoordStrings {
     for(my $i = 0; $i < $ngenes; $i++) { 
       push(@{$len_AR},    lengthFromCoords($tbl_HHAR->{$accn}{"coords"}[$i]));
       push(@{$coords_AR}, addAccnToCoords($tbl_HHAR->{$accn}{"coords"}[$i], $accn));
+    }
+  }
+
+  return;
+}
+
+# Subroutine: getQualifierValues()
+# Synopsis:   Retreive values for the qualifier $qualifier in the given %tbl_HHAR
+#             and return the values in $values_AR.
+#             the length of all annotated genes.
+# Args:       $tbl_HHAR:  ref to hash of hash of arrays
+#             $accn:      accession we're interested in
+#             $qualifier: qualifier we're interested in (e.g. 'Product')
+#             $values_AR: ref to array to fill with values of $qualifier
+# Returns:    void; fills @{$values_AR}
+#
+sub getQualifierValues {
+  my $sub_name = "getQualifierValues()";
+  my $nargs_exp = 4;
+  if(scalar(@_) != $nargs_exp) { die "ERROR $sub_name entered with wrong number of input args"; }
+ 
+  my ($tbl_HHAR, $accn, $qualifier, $values_AR) = @_;
+
+  if(! exists $tbl_HHAR->{$accn}) { die "ERROR in $sub_name, no data for accession: $accn"; }
+
+  my $nvalues = scalar(@{$tbl_HHAR->{$accn}{$qualifier}});
+
+  if ($nvalues > 0) { 
+    for(my $i = 0; $i < $nvalues; $i++) { 
+      push(@{$values_AR},  $tbl_HHAR->{$accn}{$qualifier}[$i]);
     }
   }
 
