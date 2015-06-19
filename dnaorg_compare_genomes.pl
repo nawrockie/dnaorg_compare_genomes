@@ -370,6 +370,7 @@ if($do_uc) {
   close(UC);
   printf("#\n# Shell script for running $nuc usearch commands saved to $uc_script.\n");
 }
+printf("#[ok]\n");
 
 ########################################################
 # CURRENTLY NO CONCISE OUTPUT IS PRINTED, BUT I'VE
