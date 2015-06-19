@@ -321,7 +321,7 @@ for(my $c = 0; $c < $nclasses; $c++) {
   while(my $line = <IN>) { 
     if($line =~ m/^>/) { 
       chomp $line;
-      if($line =~ /^>.*\|(\S+)\|\s+(.+)$/) { 
+      if($line =~ /^>.*\|(\S+)\|\S*\s+(.+)$/) { 
         print OUT (">$1 $2\n");
       }
       else { die "ERROR unable to parse defline $line in file $tmp_out_fetch_gnm_fa"; }
@@ -376,7 +376,6 @@ printf("#[ok]\n");
 # CURRENTLY NO CONCISE OUTPUT IS PRINTED, BUT I'VE
 # LEFT THE BELOW CODE BLOCK FOR REFERENCE AND/OR FUTURE USE
 #
-printf("\n\n");
 # the concise output
 my ($ncds0, $npos0, $nneg0, $nunc0, $nbth0, $strand_str0) = getStrandStats(\%cds_tbl_HHA, $head_accn);
 my @cds_len0_A = (); 
