@@ -29,12 +29,13 @@ $usage .= " created by running 'dnaorg_fetch_dna_wrapper.pl -ftable' and\n";
 $usage .= " subsequently 'parse-ftable.pl'.\n";
 $usage .= "\n";
 $usage .= " BASIC OPTIONS:\n";
-$usage .= "  -t <f>     : fractional length difference threshold for mismatch [default: 0.1]\n";
-$usage .= "  -s         : use short names: all CDS seqs will be named as sequence accession\n";
-$usage .= "  -product   : add CDS 'product' qualifier value to output sequence files deflines\n";
-$usage .= "  -protid    : add CDS 'protein_id' qualifier value to output sequence files deflines\n";
-$usage .= "  -uc        : create a shell script to run uclust jobs for all fasta files\n";
-$usage .= "  -uc_id <f> : with -uc, set sequence identity cutoff to <f> [default: $df_uc_id]\n";
+$usage .= "  -t <f>      : fractional length difference threshold for mismatch [default: 0.1]\n";
+$usage .= "  -s          : use short names: all CDS seqs will be named as sequence accession\n";
+$usage .= "  -product    : add CDS 'product' qualifier value to output sequence files deflines\n";
+$usage .= "  -protid     : add CDS 'protein_id' qualifier value to output sequence files deflines\n";
+$usage .= "  -codonstart : add CDS 'protein_id' qualifier value to output sequence files deflines\n";
+$usage .= "  -uc         : create a shell script to run uclust jobs for all fasta files\n";
+$usage .= "  -uc_id <f>  : with -uc, set sequence identity cutoff to <f> [default: $df_uc_id]\n";
 $usage .= "\n";
 
 my ($seconds, $microseconds) = gettimeofday();
@@ -46,13 +47,15 @@ my $fraclen       = undef;
 my $do_shortnames = 0; # changed to '1' if -s enabled
 my $do_product    = 0; # changed to '1' if -product enabled
 my $do_protid     = 0; # changed to '1' if -protid enabled
+my $do_codonstart = 0; # changed to '1' if -codonstart enabled
 
-&GetOptions( "t"       => \$fraclen, 
-             "s"       => \$do_shortnames, 
-             "product" => \$do_product,
-             "protid"  => \$do_protid,
-             "uc"      => \$do_uc, 
-             "uc_id"   => \$uc_id) || 
+&GetOptions( "t"          => \$fraclen, 
+             "s"          => \$do_shortnames, 
+             "product"    => \$do_product,
+             "protid"     => \$do_protid,
+             "codonstart" => \$do_codonstart,
+             "uc"         => \$do_uc, 
+             "uc_id"      => \$uc_id) || 
     die "Unknown option";
 
 if(scalar(@ARGV) != 2) { die $usage; }
@@ -77,7 +80,11 @@ if($do_product) {
 }
 if($do_protid) { 
   $opts_used_short .= "-protid ";
-  $opts_used_long  .= "# option:  adding \'protein_id\' qualifier values to output sequence file deflines [-prot_id]\n";
+  $opts_used_long  .= "# option:  adding \'protein_id\' qualifier values to output sequence file deflines [-protid]\n";
+}
+if($do_codonstart) { 
+  $opts_used_short .= "-codonstart ";
+  $opts_used_long  .= "# option:  adding \'codon_start\' qualifier values to output sequence file deflines [-codonstart]\n";
 }
 if($do_uc) { 
   $opts_used_short .= "-uc ";
@@ -207,8 +214,10 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   my $strand_str = "";
   my @cds_len_A = ();
   my @cds_coords_A = ();
-  my @cds_product_A = (); # will remain empty unless $do_product is 1 (-product enabled at cmdline)
-  my @cds_protid_A = ();  # will remain empty unless $do_protid is 1 (-protid enabled at cmdline)
+  my @cds_product_A = ();    # will remain empty unless $do_product is 1 (-product enabled at cmdline)
+  my @cds_protid_A = ();     # will remain empty unless $do_protid is 1 (-protid enabled at cmdline)
+  my @cds_codonstart_A = (); # will remain empty unless $do_codonstart is 1 (-codonstart enabled at cmdline)
+  my $do_desc = ($do_product || $do_protid || $do_codonstart) ? 1 : 0;
 
   if(exists ($cds_tbl_HHA{$accn})) { 
     ($ncds, $npos, $nneg, $nunc, $nbth, $strand_str) = getStrandStats(\%cds_tbl_HHA, $accn);
@@ -218,6 +227,9 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
     }
     if($do_protid) { 
       getQualifierValues(\%cds_tbl_HHA, $accn, "protein_id", \@cds_protid_A);
+    }
+    if($do_codonstart) { 
+      getQualifierValues(\%cds_tbl_HHA, $accn, "codon_start", \@cds_codonstart_A);
     }
   }
   if($a == 0) { 
@@ -248,7 +260,8 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
 
   for(my $i = 0; $i < $ngenes; $i++) { 
     my $desc = "";
-    if($do_product || $do_protid) { 
+    # determine DESCRIPTION: string, esl-fetch-cds.pl will parse this and add it as a description in the defline after fetching the sequence
+    if($do_desc) { 
       $desc = "\tDESCRIPTION:";
       if($do_product) { 
         $desc .= "product:";
@@ -259,13 +272,24 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
         else { 
           $desc .= "none-annotated";
         }
-        if($do_protid) { $desc .= " "; }
+        if($do_protid || $do_codonstart) { $desc .= " "; }
       }
       if($do_protid) { 
         $desc .= "protein_id:";
         if(scalar(@cds_protid_A) > 0) { 
           if($i >= scalar(@cds_protid_A)) { die "ERROR ran out of protein_ids too early for $accn\n"; }
           $desc .= $cds_protid_A[$i];
+        }
+        else { 
+          $desc .= "none-annotated";
+        }
+        if($do_codonstart) { $desc .= " "; }
+      }
+      if($do_codonstart) { 
+        $desc .= "codon_start:";
+        if(scalar(@cds_codonstart_A) > 0) { 
+          if($i >= scalar(@cds_codonstart_A)) { die "ERROR ran out of codon_starts too early for $accn\n"; }
+          $desc .= $cds_codonstart_A[$i];
         }
         else { 
           $desc .= "none-annotated";
@@ -713,6 +737,8 @@ sub getQualifierValues {
   my ($tbl_HHAR, $accn, $qualifier, $values_AR) = @_;
 
   if(! exists $tbl_HHAR->{$accn}) { die "ERROR in $sub_name, no data for accession: $accn"; }
+
+  if(! exists $tbl_HHAR->{$accn}{$qualifier}) { return; } # no annotation for $qualifier, do not update arrays
 
   my $nvalues = scalar(@{$tbl_HHAR->{$accn}{$qualifier}});
 
