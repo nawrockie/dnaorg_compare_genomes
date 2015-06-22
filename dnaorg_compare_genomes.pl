@@ -32,6 +32,7 @@ $usage .= " BASIC OPTIONS:\n";
 $usage .= "  -t <f>     : fractional length difference threshold for mismatch [default: 0.1]\n";
 $usage .= "  -s         : use short names: all CDS seqs will be named as sequence accession\n";
 $usage .= "  -product   : add CDS 'product' qualifier value to output sequence files deflines\n";
+$usage .= "  -protid    : add CDS 'protein_id' qualifier value to output sequence files deflines\n";
 $usage .= "  -uc        : create a shell script to run uclust jobs for all fasta files\n";
 $usage .= "  -uc_id <f> : with -uc, set sequence identity cutoff to <f> [default: $df_uc_id]\n";
 $usage .= "\n";
@@ -44,12 +45,15 @@ my $df_fraclen    = 0.1;
 my $fraclen       = undef;
 my $do_shortnames = 0; # changed to '1' if -s enabled
 my $do_product    = 0; # changed to '1' if -product enabled
+my $do_protid     = 0; # changed to '1' if -protid enabled
 
 &GetOptions( "t"       => \$fraclen, 
              "s"       => \$do_shortnames, 
              "product" => \$do_product,
+             "protid"  => \$do_protid,
              "uc"      => \$do_uc, 
-             "uc_id"   => \$uc_id);
+             "uc_id"   => \$uc_id) || 
+    die "Unknown option";
 
 if(scalar(@ARGV) != 2) { die $usage; }
 my ($dir, $listfile) = (@ARGV);
@@ -63,15 +67,19 @@ if(defined $fraclen) {
   $opts_used_short .= "-t $fraclen";
   $opts_used_long  .= "# option:  setting fractional length threshold to $fraclen [-t]\n";
 }
-if(defined $do_shortnames) { 
+if($do_shortnames) { 
   $opts_used_short .= "-s ";
   $opts_used_long  .= "# option:  outputting CDS names as accessions [-s]\n";
 }
-if(defined $do_product) { 
+if($do_product) { 
   $opts_used_short .= "-product ";
   $opts_used_long  .= "# option:  adding \'product\' qualifier values to output sequence file deflines [-product]\n";
 }
-if(defined $do_uc) { 
+if($do_protid) { 
+  $opts_used_short .= "-protid ";
+  $opts_used_long  .= "# option:  adding \'protein_id\' qualifier values to output sequence file deflines [-prot_id]\n";
+}
+if($do_uc) { 
   $opts_used_short .= "-uc ";
   $opts_used_long  .= "# option:  outputting uclust shell script [-uc]\n";
 }
@@ -200,12 +208,16 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
   my @cds_len_A = ();
   my @cds_coords_A = ();
   my @cds_product_A = (); # will remain empty unless $do_product is 1 (-product enabled at cmdline)
+  my @cds_protid_A = ();  # will remain empty unless $do_protid is 1 (-protid enabled at cmdline)
 
   if(exists ($cds_tbl_HHA{$accn})) { 
     ($ncds, $npos, $nneg, $nunc, $nbth, $strand_str) = getStrandStats(\%cds_tbl_HHA, $accn);
     getLengthStatsAndCoordStrings(\%cds_tbl_HHA, $accn, \@cds_len_A, \@cds_coords_A);
     if($do_product) { 
       getQualifierValues(\%cds_tbl_HHA, $accn, "product", \@cds_product_A);
+    }
+    if($do_protid) { 
+      getQualifierValues(\%cds_tbl_HHA, $accn, "protein_id", \@cds_protid_A);
     }
   }
   if($a == 0) { 
@@ -236,14 +248,28 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
 
   for(my $i = 0; $i < $ngenes; $i++) { 
     my $desc = "";
-    if($do_product) { 
-      $desc = "\tDESCRIPTION:product:";
-      if(scalar(@cds_product_A) > 0) { 
-        if($i >= scalar(@cds_product_A)) { die "ERROR ran out of products too early for $accn\n"; }
-        $desc .= $cds_product_A[$i];
+    if($do_product || $do_protid) { 
+      $desc = "\tDESCRIPTION:";
+      if($do_product) { 
+        $desc .= "product:";
+        if(scalar(@cds_product_A) > 0) { 
+          if($i >= scalar(@cds_product_A)) { die "ERROR ran out of products too early for $accn\n"; }
+          $desc .= $cds_product_A[$i];
+        }
+        else { 
+          $desc .= "none-annotated";
+        }
+        if($do_protid) { $desc .= " "; }
       }
-      else { 
-        $desc .= "none-annotated";
+      if($do_protid) { 
+        $desc .= "protein_id:";
+        if(scalar(@cds_protid_A) > 0) { 
+          if($i >= scalar(@cds_protid_A)) { die "ERROR ran out of protein_ids too early for $accn\n"; }
+          $desc .= $cds_protid_A[$i];
+        }
+        else { 
+          $desc .= "none-annotated";
+        }
       }
     }
     $outline .= sprintf("  %5d", $cds_len_A[$i]);
