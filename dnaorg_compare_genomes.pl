@@ -400,7 +400,7 @@ for(my $c = 0; $c < $nclasses; $c++) {
     my $cmd = "";
     if($do_shortnames) { 
       $cmd = "perl $esl_fetch_cds -onlyaccn $out_fetch_cds_file > $out_fetch_cds_fa";
-      printf("$cmd\n");
+      #printf("$cmd\n");
     }
     else { 
       $cmd = "perl $esl_fetch_cds -nocodon $out_fetch_cds_file > $out_fetch_cds_fa";
