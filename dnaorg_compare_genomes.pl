@@ -321,7 +321,7 @@ for(my $a = 0; $a < scalar(@accn_A); $a++) {
 }
 # print header line
 printf("#\n");
-printf("#%-*s  %5s  %5s  %5s  %5s  %5s  %-*s  %3s  %7s  ", $waccn-1, "accn", "#cds", "#pos", "#neg", "#both", "#unkn", $wstrand_str, "strand-string", "cls", "tot-len");
+printf("#%-*s  %5s  %5s  %5s  %5s  %5s  %-*s  %3s  %7s  ", $waccn-1, "accn", ($do_matpept) ? "#mp" : "#cds", "#pos", "#neg", "#both", "#unkn", $wstrand_str, "strand-string", "cls", "tot-len");
 for(my $i = 0; $i < $max_ngenes; $i++) { 
   printf("  %5s", sprintf("g%d", ($i+1)));
 }
@@ -393,7 +393,7 @@ for(my $c = 0; $c < $nclasses; $c++) {
 
   # fetch the cds'
   for(my $i = 0; $i < scalar(@{$out_fetch_cds_AA[$c]}); $i++) { 
-    my $cg_substr = ".c" . ($c+1) . ".g" . ($i+1);
+    my $cg_substr = sprintf("%s%d%s%d", ".c", ($c+1), ($do_matpept) ? ".mp" : ".g", ($i+1));
     my $out_fetch_cds_file = $out_root . $cg_substr . ".esl-fetch-cds.in";
     my $out_fetch_cds_fa   = $out_root . $cg_substr . ".fa";
     my $np_out_fetch_cds_fa    = stripPath($out_fetch_cds_fa);
@@ -404,7 +404,7 @@ for(my $c = 0; $c < $nclasses; $c++) {
     print OUT $out_fetch_cds_AA[$c][$i];
     close OUT;
     sleep(0.1);
-    printf("# Fetching %3d CDS sequences for class %2d gene %2d ... ", $ct_fetch_cds_AA[$c][$i], $c+1, $i+1);
+    printf("# Fetching %3d %s sequences for class %2d gene %2d ... ", $ct_fetch_cds_AA[$c][$i], ($do_matpept) ? "mature peptide coding sequences" : "CDS", $c+1, $i+1);
     my $cmd = "";
     if($do_shortnames) { 
       $cmd = "perl $esl_fetch_cds -onlyaccn $out_fetch_cds_file > $out_fetch_cds_fa";
