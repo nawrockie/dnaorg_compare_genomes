@@ -36,6 +36,7 @@ $usage .= "  -protid     : add CDS 'protein_id' qualifier value to output sequen
 $usage .= "  -codonstart : add CDS 'protein_id' qualifier value to output sequence files deflines\n";
 $usage .= "  -uc         : create a shell script to run uclust jobs for all fasta files\n";
 $usage .= "  -uc_id <f>  : with -uc, set sequence identity cutoff to <f> [default: $df_uc_id]\n";
+$usage .= "  -matpept    : use mat_peptide information, not CDS information\n";
 $usage .= "\n";
 
 my ($seconds, $microseconds) = gettimeofday();
@@ -48,6 +49,7 @@ my $do_shortnames = 0; # changed to '1' if -s enabled
 my $do_product    = 0; # changed to '1' if -product enabled
 my $do_protid     = 0; # changed to '1' if -protid enabled
 my $do_codonstart = 0; # changed to '1' if -codonstart enabled
+my $do_matpept    = 0; # changed to '1' if -matpept enabled
 
 &GetOptions( "t"          => \$fraclen, 
              "s"          => \$do_shortnames, 
@@ -55,7 +57,8 @@ my $do_codonstart = 0; # changed to '1' if -codonstart enabled
              "protid"     => \$do_protid,
              "codonstart" => \$do_codonstart,
              "uc"         => \$do_uc, 
-             "uc_id"      => \$uc_id) || 
+             "uc_id"      => \$uc_id, 
+             "matpept"    => \$do_matpept) || 
     die "Unknown option";
 
 if(scalar(@ARGV) != 2) { die $usage; }
@@ -94,6 +97,10 @@ if(defined $uc_id) {
   $opts_used_short .= "-uc_id ";
   $opts_used_long  .= "# option:  uclust cluster identity set to $uc_id [-uc_id]\n";
 }
+if($do_matpept) { 
+  $opts_used_short .= "-matpept ";
+  $opts_used_long  .= "# option:  using mat_peptide info instead of CDS info [-matpept]\n";
+}
 
 # check for incompatible option values/combinations:
 if(defined $fraclen && ($fraclen < 0 || $fraclen > 1)) { 
@@ -120,7 +127,8 @@ if(! -s $listfile) { die "ERROR list file $listfile does not exist, or is empty"
 my $dir_tail = $dir;
 $dir_tail =~ s/^.+\///; # remove all but last dir
 #my $gene_tbl_file  = $dir . "/" . $dir_tail . ".gene.tbl";
-my $cds_tbl_file   = $dir . "/" . $dir_tail . ".CDS.tbl";
+my $cds_tbl_file;
+$cds_tbl_file = ($do_matpept) ? ($dir . "/" . $dir_tail . ".mat_peptide.tbl") : ($dir . "/" . $dir_tail . ".CDS.tbl");
 my $length_file    = $dir . "/" . $dir_tail . ".length";
 my $out_root = $dir . "/" . $dir_tail;
 #if(! -s $gene_tbl_file) { die "ERROR $gene_tbl_file does not exist."; }
